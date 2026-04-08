@@ -570,13 +570,36 @@ const Sprites = {
     // ===== LANE EFFECTS =====
     laneFlames(ctx, x, y, w, h, t) {
         ctx.save();
-        ctx.globalAlpha = 0.4;
-        for (let i = 0; i < 8; i++) {
-            const fx = x + (i / 8) * w + Math.sin(t / 200 + i) * 10;
-            const fy = y + h - 10 + Math.sin(t / 150 + i * 0.7) * 8;
-            const fs = 10 + Math.sin(t / 100 + i) * 5;
+        // Base heat shimmer
+        ctx.globalAlpha = 0.18;
+        const heatGrad = ctx.createLinearGradient(x, y + h, x, y);
+        heatGrad.addColorStop(0, '#ff4400');
+        heatGrad.addColorStop(0.5, '#ff8800');
+        heatGrad.addColorStop(1, 'rgba(255,100,0,0)');
+        ctx.fillStyle = heatGrad;
+        ctx.fillRect(x, y, w, h);
+
+        // Fireball rope along the lane floor (using the improved fireball sprite)
+        ctx.globalAlpha = 0.55;
+        for (let i = 0; i < 10; i++) {
+            const fx = x + (i / 10) * w + Math.sin(t / 200 + i * 1.7) * 10;
+            const fy = y + h - 8 + Math.sin(t / 150 + i * 0.7) * 8;
+            const fs = 10 + Math.sin(t / 100 + i) * 4;
             Sprites.fireball(ctx, fx, fy, fs);
         }
+
+        // Floating ember sparks above flames
+        ctx.globalAlpha = 0.7;
+        for (let i = 0; i < 6; i++) {
+            const ex = x + ((t / 8 + i * 137) % w);
+            const ey = y + h * 0.3 + Math.sin(t / 150 + i * 3) * (h * 0.25);
+            const es = 1.5 + Math.sin(t / 90 + i * 2) * 0.8;
+            ctx.fillStyle = i % 2 === 0 ? '#ffcc44' : '#ff6622';
+            ctx.beginPath();
+            ctx.arc(ex, ey, es, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
         ctx.restore();
     },
 
@@ -625,25 +648,40 @@ const Sprites = {
         // BURNING: fire licking from below + orange tint
         if (status.burning) {
             ctx.save();
-            ctx.globalAlpha = 0.2;
+            // Warm tint
+            ctx.globalAlpha = 0.12;
             ctx.fillStyle = '#ff4400';
             ctx.fillRect(cx - hs, cy - hs, size, size);
-            ctx.globalAlpha = 0.7;
-            // Flames from bottom
+
+            // Small teardrop flames from bottom
             for (let i = 0; i < 5; i++) {
                 const fx = cx - hs + (i / 4) * size;
-                const fy = cy + hs - 4 + Math.sin(t / 100 + i * 1.5) * 6;
-                const fs = 6 + Math.sin(t / 80 + i) * 3;
-                this.fireball(ctx, fx, fy, fs);
+                const baseY = cy + hs;
+                const fh = 8 + Math.sin(t / 80 + i * 2.3) * 4;
+                const fw = 3 + Math.sin(t / 60 + i) * 1;
+
+                const grad = ctx.createLinearGradient(fx, baseY, fx, baseY - fh);
+                grad.addColorStop(0, 'rgba(255,80,0,0.5)');
+                grad.addColorStop(0.5, 'rgba(255,200,60,0.35)');
+                grad.addColorStop(1, 'rgba(255,255,150,0)');
+                ctx.fillStyle = grad;
+                ctx.globalAlpha = 0.7;
+                ctx.beginPath();
+                ctx.moveTo(fx - fw, baseY);
+                ctx.quadraticCurveTo(fx - fw, baseY - fh * 0.5, fx + Math.sin(t / 70 + i) * 2, baseY - fh);
+                ctx.quadraticCurveTo(fx + fw, baseY - fh * 0.5, fx + fw, baseY);
+                ctx.closePath();
+                ctx.fill();
             }
-            // Top embers
+
+            // Rising ember sparks
             for (let i = 0; i < 3; i++) {
                 const ex = cx + Math.sin(t / 200 + i * 2) * hs * 0.6;
                 const ey = cy - hs - 6 + Math.sin(t / 150 + i) * 4;
-                ctx.fillStyle = '#ffaa00';
+                ctx.fillStyle = i % 2 === 0 ? '#ffcc44' : '#ff6622';
                 ctx.globalAlpha = 0.5 + Math.sin(t / 100 + i * 3) * 0.3;
                 ctx.beginPath();
-                ctx.arc(ex, ey, 2, 0, Math.PI * 2);
+                ctx.arc(ex, ey, 1.5, 0, Math.PI * 2);
                 ctx.fill();
             }
             ctx.restore();

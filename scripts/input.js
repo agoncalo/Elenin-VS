@@ -11,6 +11,9 @@ class InputManager {
         this.locked = false;
         this.lockTimer = 0;
         this.enabled = true;
+        this.lastCombo = [];          // last cast combo keys
+        this.postCastTimer = 0;       // post-cast cooldown remaining
+        this.postCastMax = 0;         // post-cast cooldown total (for progress)
 
         window.addEventListener('keydown', e => {
             if (!this.enabled) return;
@@ -37,11 +40,14 @@ class InputManager {
 
         if (this.combo.length >= 3) {
             const key = this.combo.join('');
+            this.lastCombo = [...this.combo];
             this.combo = [];
             this.comboTimer = 0;
-            // Post-cast cooldown to prevent misinputs
+            // Post-cast cooldown — keeps last orbs visible
             this.locked = true;
-            this.lockTimer = 300;
+            this.postCastMax = CONFIG.POST_CAST_COOLDOWN;
+            this.postCastTimer = this.postCastMax;
+            this.lockTimer = this.postCastMax;
             if (this.onSpellCast) this.onSpellCast(key);
         }
     }
@@ -53,6 +59,15 @@ class InputManager {
             if (this.comboTimer <= 0) {
                 this.combo = [];
                 this.comboTimer = 0;
+            }
+        }
+
+        // Post-cast cooldown
+        if (this.postCastTimer > 0) {
+            this.postCastTimer -= dt;
+            if (this.postCastTimer <= 0) {
+                this.postCastTimer = 0;
+                this.lastCombo = [];
             }
         }
 
@@ -77,8 +92,21 @@ class InputManager {
         this.combo = [];
         this.comboTimer = 0;
         this.locked = false;
+        this.lastCombo = [];
+        this.postCastTimer = 0;
+        this.postCastMax = 0;
         this.onSpellCast = null;
     }
 
-    getCombo() { return [...this.combo]; }
+    getCombo() {
+        // During post-cast cooldown, return the last cast combo
+        if (this.postCastTimer > 0 && this.lastCombo.length === 3) return [...this.lastCombo];
+        return [...this.combo];
+    }
+
+    getPostCastProgress() {
+        // Returns 0-1 (1 = just cast, 0 = ready)
+        if (this.postCastMax <= 0 || this.postCastTimer <= 0) return 0;
+        return this.postCastTimer / this.postCastMax;
+    }
 }

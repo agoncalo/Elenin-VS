@@ -101,20 +101,20 @@ const SPELL_DATA = {
     'XCZ': {
         name: 'Meteor Rain', type: 'aoe', category: 'ultimate', affinity: 'fire',
         icon: 'aoe_fire',
-        desc: 'Rains fire across all lanes.',
-        stats: { dmg: 3, hits: 4, cd: 5000 },
+        desc: 'Rains fire across all lanes. Burns everything.',
+        stats: { dmg: 1, hits: 4, burnDmg: 1, burnDur: 2000, cd: 5000 },
     },
     'XCX': {
         name: 'Glacial Wave', type: 'aoe', category: 'ultimate', affinity: 'ice',
         icon: 'aoe_ice',
         desc: 'Massive freeze wave across all lanes.',
-        stats: { freezeDur: 2000, dmg: 2, cd: 5000 },
+        stats: { freezeDur: 2000, dmg: 1, cd: 5000 },
     },
     'XCC': {
         name: 'Thunder Wrath', type: 'aoe', category: 'ultimate', affinity: 'shock',
         icon: 'aoe_shock',
         desc: 'Lightning storm across all lanes.',
-        stats: { stunDur: 1200, dmg: 4, cd: 5000 },
+        stats: { stunDur: 1200, dmg: 1, cd: 5000 },
     },
 
     // ===== C-starters: Summons =====

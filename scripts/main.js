@@ -12,9 +12,10 @@
     // Player state (persists across fights in session)
     const defeated = new Set();          // enemy IDs beaten this session
     let playerSkin = PLAYER_SKINS[0];    // current skin (default black)
+    const playerStats = new PlayerStats();
 
     // State machine
-    let state = 'menu';        // menu | spells | skins | enemySelect | combat | defeat
+    let state = 'menu';        // menu | spells | skins | howtoplay | stats | enemySelect | combat | defeat
     let scene = new MenuScene(input);
     let currentEnemy = null;
     let combat = null;
@@ -33,12 +34,18 @@
             case 'skins':
                 scene = new SkinSelectScene(input, defeated, playerSkin.id);
                 break;
+            case 'howtoplay':
+                scene = new HowToPlayScene(input);
+                break;
+            case 'stats':
+                scene = new StatsScene(input, playerStats);
+                break;
             case 'enemySelect':
                 scene = new EnemySelectScene(input);
                 break;
             case 'combat':
                 currentEnemy = data;
-                combat = new Combat(data, input, playerSkin);
+                combat = new Combat(data, input, playerSkin, playerStats);
                 scene = combat;
                 break;
             case 'defeat':
@@ -60,6 +67,8 @@
                 if (result === 'Fight') setState('enemySelect');
                 else if (result === 'Spells') setState('spells');
                 else if (result === 'Skins') setState('skins');
+                else if (result === 'How to Play') setState('howtoplay');
+                else if (result === 'Stats') setState('stats');
                 break;
 
             case 'spells':
@@ -74,6 +83,16 @@
                     playerSkin = result.skin;
                     setState('menu');
                 }
+                break;
+
+            case 'howtoplay':
+                result = scene.update(dt);
+                if (result === 'back') setState('menu');
+                break;
+
+            case 'stats':
+                result = scene.update(dt);
+                if (result === 'back') setState('menu');
                 break;
 
             case 'enemySelect':

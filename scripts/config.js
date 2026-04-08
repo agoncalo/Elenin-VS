@@ -33,6 +33,7 @@ const CONFIG = {
     LANE_SWITCH_TIME: 150,       // ms to jump between lanes
     SPELL_INPUT_TIMEOUT: 1500,   // ms to finish a 3-key combo
     COMBO_LOCKOUT: 80,           // ms between key presses in a combo
+    POST_CAST_COOLDOWN: 500,     // ms after casting before new combo input
 
     // Loyalty drop per minion HP
     LOYALTY_PER_HP: 0.5,
@@ -88,58 +89,58 @@ const ENEMIES = [
     {
         id: 'kaen',
         name: 'Kaen', title: 'Fire Genin', affinity: 'fire',
-        spells: ['ZZZ','ZZX','XZZ','XXX','CCC'],
+        spells: ['ZZZ','ZZX','XZZ','XXX','CZZ','CCC'],
         color: '#ff6b35', aiSpeed: 0.6, castRate: 2500,
         desc: 'Aggressive fire user. Loves Burn Lane and Fire Birds.',
     },
     {
         id: 'hyoga',
         name: 'Hyoga', title: 'Ice Kunoichi', affinity: 'ice',
-        spells: ['ZZZ','ZZX','XZX','XXZ','CZX','CCZ'],
+        spells: ['ZZZ','ZZX','XZX','XXZ','CZX','CZZ','CCZ'],
         color: '#00d4ff', aiSpeed: 0.7, castRate: 2200,
-        desc: 'Freezes lanes and hides behind Shield Javelineers.',
+        desc: 'Freezes lanes and hides behind Blockies and Crystal Birds.',
     },
     {
         id: 'kaze',
         name: 'Kaze', title: 'Wind Kunoichi', affinity: 'wind',
-        spells: ['ZZZ','ZZC','ZCX','XZC','CXC'],
+        spells: ['ZZZ','ZZC','ZXX','ZCX','XZC','CXC','CZC'],
         color: '#88ffcc', aiSpeed: 0.9, castRate: 1800,
-        desc: 'Lightning fast. Dodges constantly and uses poison.',
+        desc: 'Lightning fast. Samurai and Javelineers hold the line.',
     },
     {
         id: 'raiden',
         name: 'Raiden', title: 'Thunder Jonin', affinity: 'shock',
-        spells: ['ZZX','ZXC','XZZ','XCC','CXC','CCX'],
+        spells: ['ZZX','ZXC','XZZ','XCC','CZX','CXC','CCX'],
         color: '#ffee00', aiSpeed: 0.8, castRate: 2000,
-        desc: 'Stun-locks with AOE Shock and Electric Birds.',
+        desc: 'Stun-locks with AOE Shock and swarms of summons.',
     },
     {
         id: 'tsuchi',
         name: 'Tsuchi', title: 'Earth Sage', affinity: 'earth',
-        spells: ['ZZX','ZCZ','XXC','CZX','CZC'],
+        spells: ['ZZX','ZCZ','XXC','XCC','CZX','CZC','CXC'],
         color: '#aa8855', aiSpeed: 0.5, castRate: 2800,
-        desc: 'Slow but tanky. Walls of Blockies and Boulder Tosses.',
+        desc: 'Slow but tanky. Quake stuns and walls of summons.',
     },
     {
         id: 'yami',
         name: 'Yami', title: 'Shadow Master', affinity: 'shadow',
-        spells: ['ZZX','ZCX','ZCC','XZZ','XZX','CXX','CXC'],
+        spells: ['ZZX','ZCX','ZCC','XZZ','XZX','CZZ','CXX','CXC'],
         color: '#9b59b6', aiSpeed: 0.85, castRate: 1800,
-        desc: 'Unpredictable. Uses invisibility, deflection, and Hydras.',
+        desc: 'Unpredictable. Hydras, Samurai, and Lantern heals.',
     },
     {
         id: 'mizu',
         name: 'Mizu', title: 'Water Priestess', affinity: 'water',
-        spells: ['ZZC','ZXX','ZCZ','XXZ','CZZ','CXX'],
+        spells: ['ZZC','ZXX','ZCZ','XXZ','CZZ','CZC','CXX'],
         color: '#3498db', aiSpeed: 0.7, castRate: 2000,
-        desc: 'Defensive healer. Healing Lamps and Ice Enchant.',
+        desc: 'Defensive healer. Healing Lamps and deflecting Javelineers.',
     },
     {
         id: 'ryujin',
         name: 'Ryujin', title: 'Dragon Master', affinity: 'fire',
-        spells: ['ZZX','ZXZ','XZZ','XXX','XCZ','CXZ','CXC','CCC'],
+        spells: ['ZZX','ZXZ','ZXC','XZZ','XXX','XCZ','XCC','CXZ','CXX','CXC','CCC'],
         color: '#ff4444', aiSpeed: 1.0, castRate: 1500,
-        desc: 'The ultimate test. Every fire spell, max aggression.',
+        desc: 'The ultimate test. Fire, thunder, and an army of summons.',
     },
 ];
 

@@ -2,9 +2,10 @@
 // combat.js - Battle scene: game logic, collision, rendering
 // ============================================================
 class Combat {
-    constructor(enemyData, input, playerSkin) {
+    constructor(enemyData, input, playerSkin, stats) {
         this.enemyData = enemyData;
         this.input = input;
+        this.stats = stats || null;
         this.effects = new EffectsManager();
 
         // Player
@@ -48,6 +49,24 @@ class Combat {
 
         // Hook up spell casting
         this.input.onSpellCast = (key) => this._onPlayerCast(key);
+
+        // Wrap takeDamage for stats tracking
+        if (this.stats) {
+            const origPlayerTD = this.player.takeDamage.bind(this.player);
+            const stats = this.stats;
+            this.player.takeDamage = function(amount, effects, attacker) {
+                const actual = origPlayerTD(amount, effects, attacker);
+                if (actual === 0 && this.shielded) stats.recordDmgBlocked();
+                else if (actual > 0) stats.recordDmgTaken(actual);
+                return actual;
+            };
+            const origEnemyTD = this.enemy.takeDamage.bind(this.enemy);
+            this.enemy.takeDamage = function(amount, effects, attacker) {
+                const actual = origEnemyTD(amount, effects, attacker);
+                if (actual > 0) stats.recordDmgDealt(actual);
+                return actual;
+            };
+        }
     }
 
     _onPlayerCast(comboKey) {
@@ -76,6 +95,7 @@ class Combat {
             this.spellInfoTimer = 2500;
             this.castHistory.unshift({ comboKey });
             if (this.castHistory.length > 8) this.castHistory.length = 8;
+            if (this.stats) this.stats.recordSpellCast(comboKey);
         } else {
             this.enemyCastHistory.unshift({ comboKey });
             if (this.enemyCastHistory.length > 8) this.enemyCastHistory.length = 8;
@@ -213,10 +233,12 @@ class Combat {
         if (stats.freezeDur) {
             target.freezeTimer = Math.max(target.freezeTimer, stats.freezeDur);
             enemySummons.forEach(s => { s.freezeTimer = Math.max(s.freezeTimer, stats.freezeDur); });
+            if (isPlayer && this.stats) this.stats.recordStunFreeze();
         }
         if (stats.stunDur) {
             target.stunTimer = Math.max(target.stunTimer, stats.stunDur);
             enemySummons.forEach(s => { s.stunTimer = Math.max(s.stunTimer, stats.stunDur); });
+            if (isPlayer && this.stats) this.stats.recordStunFreeze();
         }
 
         // Big visual
@@ -264,6 +286,12 @@ class Combat {
         return Math.max(1, dmg);
     }
 
+    _hasIncomingProjectile(lane) {
+        return this.projectiles.some(p =>
+            p.alive && p.owner === 'enemy' && p.lane === lane && p.x < CONFIG.MIDPOINT + 100
+        );
+    }
+
     _onHydraRegrow(summon) {
         // Each hydra head regrow costs its owner loyalty
         const loyDrop = Math.ceil(summon.loyaltyVal * CONFIG.LOYALTY_PER_HP * 0.5);
@@ -280,11 +308,13 @@ class Combat {
             this.enemy.loyalty -= loyDrop;
             if (this.enemy.loyalty < 0) this.enemy.loyalty = 0;
             this.effects.statusText(summon.cx, summon.y - 20, 'LOYALTY -' + loyDrop, CONFIG.C.LOYALTY);
+            if (this.stats) this.stats.recordSummonKill();
         } else if (summon.owner === 'player') {
             const loyDrop = Math.ceil(summon.loyaltyVal * CONFIG.LOYALTY_PER_HP);
             this.player.loyalty -= loyDrop;
             if (this.player.loyalty < 0) this.player.loyalty = 0;
             this.effects.statusText(summon.cx, summon.y - 20, 'LOYALTY -' + loyDrop, CONFIG.C.LOYALTY);
+            if (this.stats) this.stats.recordOwnSummonLost();
         }
         // Clean up spellOnScreen
         const owner = summon.owner === 'player' ? this.player : this.enemy;
@@ -326,8 +356,16 @@ class Combat {
             if (this.input.isDown('ArrowRight')) {
                 p.x = Math.min(CONFIG.MIDPOINT - CONFIG.SPRITE - 5, p.x + p.speed * (dt / 16));
             }
-            if (this.input.wasPressed('ArrowUp')) p.switchLane(-1);
-            if (this.input.wasPressed('ArrowDown')) p.switchLane(1);
+            if (this.input.wasPressed('ArrowUp')) {
+                const dodged = this._hasIncomingProjectile(p.lane);
+                p.switchLane(-1);
+                if (this.stats) this.stats.recordLaneSwitch(dodged);
+            }
+            if (this.input.wasPressed('ArrowDown')) {
+                const dodged = this._hasIncomingProjectile(p.lane);
+                p.switchLane(1);
+                if (this.stats) this.stats.recordLaneSwitch(dodged);
+            }
         }
 
         // Update fighters
@@ -409,12 +447,14 @@ class Combat {
             this.resultTimer = 2000;
             this.effects.shake(500, 10);
             this.effects.statusText(CONFIG.WIDTH / 2, CONFIG.HEIGHT / 2, 'VICTORY!', '#ffcc00');
+            if (this.stats) this.stats.recordFightEnd(true);
         } else if (this.player.hp <= 0 || this.player.loyalty <= 0) {
             this.result = 'lose';
             this.resultTimer = 2000;
             this.effects.shake(500, 8);
             const reason = this.player.hp <= 0 ? 'DEFEATED' : 'LOYALTY BROKEN';
             this.effects.statusText(CONFIG.WIDTH / 2, CONFIG.HEIGHT / 2, reason, '#ff4444');
+            if (this.stats) this.stats.recordFightEnd(false);
         }
 
         return null;
@@ -546,9 +586,11 @@ class Combat {
             }
             if (proj.stats.freezeDur) {
                 target.freezeTimer = Math.max(target.freezeTimer, proj.stats.freezeDur);
+                if (isPlayerProj && this.stats) this.stats.recordStunFreeze();
             }
             if (proj.stats.stunDur) {
                 target.stunTimer = Math.max(target.stunTimer, proj.stats.stunDur);
+                if (isPlayerProj && this.stats) this.stats.recordStunFreeze();
             }
             if (proj.stats.poisonDmg) {
                 target.burnTimer = proj.stats.poisonDur || 3000;
@@ -794,7 +836,7 @@ class Combat {
         ctx.stroke();
 
         // Combo orbs
-        UI.drawComboOrbs(ctx, this.input.getCombo());
+        UI.drawComboOrbs(ctx, this.input.getCombo(), this.input.getPostCastProgress());
 
         // Spell info
         UI.drawSpellInfo(ctx, this.spellInfo);

@@ -9,7 +9,7 @@ class MenuScene {
     constructor(input) {
         this.input = input;
         this.selected = 0;
-        this.options = ['Fight', 'Spells', 'Skins'];
+        this.options = ['Fight', 'Spells', 'Skins', 'How to Play', 'Stats'];
         this.titlePulse = 0;
     }
 
@@ -37,30 +37,33 @@ class MenuScene {
             ctx.stroke();
         }
 
-        // Title
+        // Title — ELENIN block-letter logo + VS
         const pulse = Math.sin(this.titlePulse) * 0.08 + 1;
         ctx.save();
-        ctx.translate(CONFIG.WIDTH / 2, 150);
+        ctx.translate(CONFIG.WIDTH / 2, 140);
         ctx.scale(pulse, pulse);
 
-        // Title shadow
-        ctx.fillStyle = 'rgba(233,69,96,0.3)';
-        ctx.font = menuFont('800', 52);
-        ctx.textAlign = 'center';
-        ctx.fillText('ELENIN VS', 2, 2);
+        // Draw the block-letter logo (from the original Elenin game)
+        drawEleninLogo(ctx, 0, 0, 0.7, Date.now());
 
-        // Title main
+        // "VS" badge to the right
         ctx.fillStyle = CONFIG.C.ACCENT;
-        ctx.fillText('ELENIN VS', 0, 0);
+        ctx.shadowColor = 'rgba(233,69,96,0.4)';
+        ctx.shadowBlur = 10;
+        ctx.font = menuFont('800', 36);
+        ctx.textAlign = 'left';
+        ctx.fillText('VS', 130, 12);
+        ctx.shadowBlur = 0;
 
         ctx.fillStyle = '#99aabb';
         ctx.font = menuFont('400', 16);
-        ctx.fillText('Ninja Spell Combat', 0, 35);
+        ctx.textAlign = 'center';
+        ctx.fillText('Ninja Spell Combat', 0, 45);
         ctx.restore();
 
         // Menu options
         this.options.forEach((opt, i) => {
-            const y = 290 + i * 56;
+            const y = 270 + i * 48;
             const sel = i === this.selected;
 
             if (sel) {
@@ -527,5 +530,588 @@ class DefeatScene {
             ctx.font = menuFont(sel ? '700' : '400', 20);
             ctx.fillText(opt, CONFIG.WIDTH / 2, y);
         });
+    }
+}
+
+// ---- How to Play ----
+class HowToPlayScene {
+    constructor(input) {
+        this.input = input;
+        this.page = 0;
+        this.pages = [
+            {
+                title: 'BASICS',
+                lines: [
+                    { icon: '←→', text: 'Move left/right with Arrow Keys' },
+                    { icon: '↑↓', text: 'Switch lanes with Up/Down Arrows' },
+                    { icon: 'ZXC', text: 'Cast spells by pressing 3-key combos' },
+                    { icon: '', text: '' },
+                    { icon: '♥', text: 'Reduce enemy HP to 0 to win' },
+                    { icon: '★', text: 'Or break their Loyalty to 0' },
+                    { icon: '', text: 'Loyalty drops when summons are killed' },
+                ],
+            },
+            {
+                title: 'SPELLS',
+                lines: [
+                    { icon: 'Z..', text: 'Z-starters: Physical attacks & utility' },
+                    { icon: 'X..', text: 'X-starters: Magic attacks & lane control' },
+                    { icon: 'C..', text: 'C-starters: Summon creatures to fight' },
+                    { icon: '', text: '' },
+                    { icon: '⚔', text: 'ZZX Sword Slash - instant, high damage' },
+                    { icon: '🔥', text: 'XXX Inferno Path - burns enemy lane' },
+                    { icon: '❄', text: 'XXZ Frostbite Path - freezes enemy lane' },
+                    { icon: '⚡', text: 'XCC Thunder Wrath - stuns all enemies' },
+                ],
+            },
+            {
+                title: 'STRATEGY',
+                lines: [
+                    { icon: '🛡', text: 'ZCZ Shield blocks all damage briefly' },
+                    { icon: '👻', text: 'ZCX Mistveil makes you invisible' },
+                    { icon: '🔄', text: 'ZCC Deflection reflects projectiles back' },
+                    { icon: '', text: '' },
+                    { icon: '✨', text: 'Enchantments buff your next attacks' },
+                    { icon: '🎯', text: 'Switch lanes to dodge incoming attacks' },
+                    { icon: '🔥', text: 'Place lane hazards to deny enemy lanes' },
+                    { icon: '💀', text: 'Kill enemy summons to drain their Loyalty' },
+                ],
+            },
+        ];
+    }
+
+    update(dt) {
+        if (this.input.wasPressed('Escape') || this.input.wasPressed('Backspace')) return 'back';
+        if (this.input.wasPressed('ArrowRight') || this.input.wasPressed('Enter') || this.input.wasPressed('KeyZ')) {
+            if (this.page < this.pages.length - 1) this.page++;
+            else return 'back';
+        }
+        if (this.input.wasPressed('ArrowLeft')) {
+            if (this.page > 0) this.page--;
+        }
+        return null;
+    }
+
+    draw(ctx) {
+        ctx.fillStyle = CONFIG.C.BG;
+        ctx.fillRect(0, 0, CONFIG.WIDTH, CONFIG.HEIGHT);
+
+        // Decorative lines
+        ctx.strokeStyle = 'rgba(233,69,96,0.04)';
+        ctx.lineWidth = 1;
+        for (let i = 0; i < 20; i++) {
+            ctx.beginPath();
+            ctx.moveTo(0, 30 + i * 32); ctx.lineTo(CONFIG.WIDTH, 30 + i * 32);
+            ctx.stroke();
+        }
+
+        const pg = this.pages[this.page];
+
+        // Title
+        ctx.fillStyle = CONFIG.C.ACCENT;
+        ctx.font = menuFont('800', 32);
+        ctx.textAlign = 'center';
+        ctx.fillText('HOW TO PLAY', CONFIG.WIDTH / 2, 60);
+
+        // Page subtitle
+        ctx.fillStyle = '#fff';
+        ctx.font = menuFont('700', 22);
+        ctx.fillText(pg.title, CONFIG.WIDTH / 2, 110);
+
+        // Page dots
+        for (let i = 0; i < this.pages.length; i++) {
+            ctx.beginPath();
+            ctx.arc(CONFIG.WIDTH / 2 - 20 + i * 20, 135, i === this.page ? 5 : 3, 0, Math.PI * 2);
+            ctx.fillStyle = i === this.page ? CONFIG.C.ACCENT : '#445566';
+            ctx.fill();
+        }
+
+        // Content lines
+        const startY = 175;
+        pg.lines.forEach((line, i) => {
+            const y = startY + i * 48;
+            if (!line.text) return; // spacer
+
+            // Icon/key badge
+            if (line.icon) {
+                ctx.fillStyle = 'rgba(233,69,96,0.15)';
+                const iconW = Math.max(40, ctx.measureText(line.icon).width + 16);
+                Sprites.roundRect(ctx, CONFIG.WIDTH / 2 - 280, y - 16, iconW, 32, 6,
+                    'rgba(233,69,96,0.12)', 'rgba(233,69,96,0.3)');
+                ctx.fillStyle = CONFIG.C.ACCENT;
+                ctx.font = menuFont('700', 16);
+                ctx.textAlign = 'center';
+                ctx.fillText(line.icon, CONFIG.WIDTH / 2 - 280 + iconW / 2, y + 3);
+            }
+
+            // Text
+            ctx.fillStyle = '#ccddee';
+            ctx.font = menuFont('400', 17);
+            ctx.textAlign = 'left';
+            ctx.fillText(line.text, CONFIG.WIDTH / 2 - 220, y + 3);
+        });
+
+        // Combo example panel on last two pages
+        if (this.page >= 1) {
+            const panelY = startY + pg.lines.length * 48 + 15;
+            Sprites.roundRect(ctx, CONFIG.WIDTH / 2 - 200, panelY, 400, 50, 8,
+                'rgba(255,255,255,0.04)', 'rgba(255,255,255,0.08)');
+            ctx.fillStyle = '#667788';
+            ctx.font = menuFont('400', 13);
+            ctx.textAlign = 'center';
+            ctx.fillText('Press Z, X, C in any combination of 3 to cast a spell!', CONFIG.WIDTH / 2, panelY + 22);
+            // Example orbs
+            const orbColors = [CONFIG.C.ORB_Z, CONFIG.C.ORB_X, CONFIG.C.ORB_C];
+            const orbLabels = ['Z', 'X', 'C'];
+            for (let i = 0; i < 3; i++) {
+                const ox = CONFIG.WIDTH / 2 - 30 + i * 30;
+                ctx.beginPath();
+                ctx.arc(ox, panelY + 40, 8, 0, Math.PI * 2);
+                ctx.fillStyle = orbColors[i];
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.font = menuFont('700', 10);
+                ctx.fillText(orbLabels[i], ox, panelY + 44);
+            }
+        }
+
+        // Navigation footer
+        ctx.fillStyle = 'rgba(255,255,255,0.25)';
+        ctx.font = menuFont('400', 12);
+        ctx.textAlign = 'center';
+        const navText = this.page < this.pages.length - 1
+            ? '← Previous    → Next    ESC Back'
+            : '← Previous    → / Z Finish    ESC Back';
+        ctx.fillText(navText, CONFIG.WIDTH / 2, CONFIG.HEIGHT - 30);
+    }
+}
+
+// ---- Stats / Playstyle ----
+class StatsScene {
+    constructor(input, stats) {
+        this.input = input;
+        this.stats = stats;
+        this.animProgress = 0; // 0→1 for hex graph animation
+        this.tab = 0; // 0 = overview + hex, 1 = detailed
+    }
+
+    update(dt) {
+        this.animProgress = Math.min(1, this.animProgress + dt * 0.002);
+        if (this.input.wasPressed('Escape') || this.input.wasPressed('Backspace')) return 'back';
+        if (this.input.wasPressed('ArrowRight') || this.input.wasPressed('ArrowLeft')) {
+            this.tab = 1 - this.tab;
+        }
+        return null;
+    }
+
+    draw(ctx) {
+        ctx.fillStyle = CONFIG.C.BG;
+        ctx.fillRect(0, 0, CONFIG.WIDTH, CONFIG.HEIGHT);
+
+        // Decorative lines
+        ctx.strokeStyle = 'rgba(233,69,96,0.04)';
+        ctx.lineWidth = 1;
+        for (let i = 0; i < 20; i++) {
+            ctx.beginPath();
+            ctx.moveTo(0, 30 + i * 32); ctx.lineTo(CONFIG.WIDTH, 30 + i * 32);
+            ctx.stroke();
+        }
+
+        // Title
+        ctx.fillStyle = CONFIG.C.ACCENT;
+        ctx.font = menuFont('800', 32);
+        ctx.textAlign = 'center';
+        ctx.fillText('PLAYER STATS', CONFIG.WIDTH / 2, 50);
+
+        // Tab indicators
+        const tabs = ['Playstyle', 'Details'];
+        tabs.forEach((t, i) => {
+            const tx = CONFIG.WIDTH / 2 - 80 + i * 160;
+            const sel = i === this.tab;
+            if (sel) {
+                Sprites.roundRect(ctx, tx - 60, 63, 120, 28, 6,
+                    'rgba(233,69,96,0.15)', CONFIG.C.ACCENT);
+            }
+            ctx.fillStyle = sel ? '#fff' : '#556677';
+            ctx.font = menuFont(sel ? '700' : '400', 14);
+            ctx.textAlign = 'center';
+            ctx.fillText(t, tx, 82);
+        });
+
+        if (this.tab === 0) {
+            this._drawPlaystyleTab(ctx);
+        } else {
+            this._drawDetailsTab(ctx);
+        }
+
+        // Footer
+        ctx.fillStyle = 'rgba(255,255,255,0.25)';
+        ctx.font = menuFont('400', 12);
+        ctx.textAlign = 'center';
+        ctx.fillText('← → Switch Tab    ESC Back', CONFIG.WIDTH / 2, CONFIG.HEIGHT - 30);
+    }
+
+    _drawPlaystyleTab(ctx) {
+        const d = this.stats.data;
+        const style = this.stats.getPlaystyle();
+        const t = this.animProgress;
+
+        // --- Hexagon radar chart (left side) ---
+        const cx = 280, cy = 340;
+        const radius = 130;
+        const axes = [
+            { key: 'assault',    label: 'Assault',    color: '#ff6b35' },
+            { key: 'control',    label: 'Control',    color: '#9b59b6' },
+            { key: 'summoner',   label: 'Summoner',   color: '#2ecc71' },
+            { key: 'resilience', label: 'Resilience', color: '#3498db' },
+            { key: 'defense',    label: 'Defense',    color: '#f1c40f' },
+            { key: 'evasion',    label: 'Evasion',    color: '#1abc9c' },
+        ];
+        const n = axes.length;
+
+        // Grid rings
+        for (let ring = 1; ring <= 4; ring++) {
+            const r = radius * ring / 4;
+            ctx.beginPath();
+            for (let i = 0; i <= n; i++) {
+                const angle = (Math.PI * 2 * i / n) - Math.PI / 2;
+                const px = cx + Math.cos(angle) * r;
+                const py = cy + Math.sin(angle) * r;
+                if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+            }
+            ctx.strokeStyle = ring === 4 ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.05)';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+
+        // Axis lines + labels
+        for (let i = 0; i < n; i++) {
+            const angle = (Math.PI * 2 * i / n) - Math.PI / 2;
+            const edgeX = cx + Math.cos(angle) * radius;
+            const edgeY = cy + Math.sin(angle) * radius;
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(edgeX, edgeY);
+            ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+            ctx.stroke();
+
+            // Label
+            const labelR = radius + 22;
+            const lx = cx + Math.cos(angle) * labelR;
+            const ly = cy + Math.sin(angle) * labelR;
+            ctx.fillStyle = axes[i].color;
+            ctx.font = menuFont('700', 12);
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(axes[i].label, lx, ly);
+
+            // Value percentage
+            const val = style[axes[i].key] || 0;
+            ctx.fillStyle = 'rgba(255,255,255,0.4)';
+            ctx.font = menuFont('400', 10);
+            ctx.fillText(Math.round(val * 100) + '%', lx, ly + 14);
+        }
+        ctx.textBaseline = 'alphabetic';
+
+        // Data polygon (animated)
+        ctx.beginPath();
+        for (let i = 0; i <= n; i++) {
+            const idx = i % n;
+            const angle = (Math.PI * 2 * idx / n) - Math.PI / 2;
+            const val = (style[axes[idx].key] || 0) * t;
+            const r = Math.max(radius * 0.04, radius * val);
+            const px = cx + Math.cos(angle) * r;
+            const py = cy + Math.sin(angle) * r;
+            if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.fillStyle = 'rgba(233,69,96,0.2)';
+        ctx.fill();
+        ctx.strokeStyle = CONFIG.C.ACCENT;
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+
+        // Data points (dots)
+        for (let i = 0; i < n; i++) {
+            const angle = (Math.PI * 2 * i / n) - Math.PI / 2;
+            const val = (style[axes[i].key] || 0) * t;
+            const r = Math.max(radius * 0.04, radius * val);
+            const px = cx + Math.cos(angle) * r;
+            const py = cy + Math.sin(angle) * r;
+            ctx.beginPath();
+            ctx.arc(px, py, 4, 0, Math.PI * 2);
+            ctx.fillStyle = axes[i].color;
+            ctx.fill();
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+        }
+
+        // --- Right side: quick stats ---
+        const rx = 520, ry = 115;
+        ctx.textAlign = 'left';
+
+        // Record
+        ctx.fillStyle = '#fff';
+        ctx.font = menuFont('700', 18);
+        ctx.fillText('Record', rx, ry);
+        ctx.fillStyle = '#aabbcc';
+        ctx.font = menuFont('400', 15);
+        ctx.fillText(d.wins + 'W / ' + d.losses + 'L  (' + d.totalFights + ' fights)', rx, ry + 22);
+
+        // Favorite element
+        const favElem = this.stats.getFavoriteElement();
+        ctx.fillStyle = '#fff';
+        ctx.font = menuFont('700', 18);
+        ctx.fillText('Favorite Element', rx, ry + 60);
+        const elemColor = CONFIG.C[favElem.toUpperCase()] || '#aabbcc';
+        ctx.fillStyle = elemColor;
+        ctx.font = menuFont('600', 15);
+        ctx.fillText(favElem === 'none' ? 'Physical' : favElem.charAt(0).toUpperCase() + favElem.slice(1), rx, ry + 82);
+
+        // Favorite spells
+        const favSpells = this.stats.getFavoriteSpells(3);
+        ctx.fillStyle = '#fff';
+        ctx.font = menuFont('700', 18);
+        ctx.fillText('Top Spells', rx, ry + 120);
+        if (favSpells.length === 0) {
+            ctx.fillStyle = '#556677';
+            ctx.font = menuFont('400', 14);
+            ctx.fillText('No data yet — go fight!', rx, ry + 142);
+        }
+        favSpells.forEach((s, i) => {
+            const sy = ry + 142 + i * 24;
+            // Combo key colored
+            const combo = s.key;
+            let kx = rx;
+            ctx.font = menuFont('700', 13);
+            for (let c = 0; c < combo.length; c++) {
+                const ch = combo[c];
+                ctx.fillStyle = ch === 'Z' ? CONFIG.C.ORB_Z : ch === 'X' ? CONFIG.C.ORB_X : CONFIG.C.ORB_C;
+                ctx.fillText(ch, kx, sy);
+                kx += 12;
+            }
+            ctx.fillStyle = '#ccddee';
+            ctx.font = menuFont('400', 13);
+            ctx.fillText(s.name + '  ×' + s.count, kx + 6, sy);
+        });
+
+        // Favorite summons
+        const favSummons = this.stats.getFavoriteSummons(3);
+        const sumY = ry + 142 + Math.max(1, favSpells.length) * 24 + 25;
+        ctx.fillStyle = '#fff';
+        ctx.font = menuFont('700', 18);
+        ctx.fillText('Top Summons', rx, sumY);
+        if (favSummons.length === 0) {
+            ctx.fillStyle = '#556677';
+            ctx.font = menuFont('400', 14);
+            ctx.fillText('No summons used yet', rx, sumY + 22);
+        }
+        favSummons.forEach((s, i) => {
+            const sy = sumY + 22 + i * 24;
+            const combo = s.key;
+            let kx = rx;
+            ctx.font = menuFont('700', 13);
+            for (let c = 0; c < combo.length; c++) {
+                const ch = combo[c];
+                ctx.fillStyle = ch === 'Z' ? CONFIG.C.ORB_Z : ch === 'X' ? CONFIG.C.ORB_X : CONFIG.C.ORB_C;
+                ctx.fillText(ch, kx, sy);
+                kx += 12;
+            }
+            ctx.fillStyle = '#ccddee';
+            ctx.font = menuFont('400', 13);
+            ctx.fillText(s.name + '  ×' + s.count, kx + 6, sy);
+        });
+
+        // Playstyle label (dominant trait)
+        const styleLabel = this._getStyleLabel(style);
+        ctx.fillStyle = CONFIG.C.ACCENT;
+        ctx.font = menuFont('800', 16);
+        ctx.textAlign = 'center';
+        ctx.fillText(styleLabel, cx, cy - radius - 30);
+    }
+
+    _drawDetailsTab(ctx) {
+        const d = this.stats.data;
+        const total = this.stats.totalSpellsCast || 1;
+        const fights = d.totalFights || 1;
+
+        const col1x = 100, col2x = 520;
+        let y = 115;
+
+        // Column 1: Combat numbers
+        ctx.textAlign = 'left';
+        ctx.fillStyle = CONFIG.C.ACCENT;
+        ctx.font = menuFont('700', 18);
+        ctx.fillText('Combat', col1x, y);
+        y += 28;
+
+        const combatStats = [
+            ['Total Damage Dealt', d.dmgDealt],
+            ['Total Damage Taken', d.dmgTaken],
+            ['Attacks Blocked', d.dmgBlocked],
+            ['Stuns/Freezes Applied', d.stunsFrozes],
+            ['Enemy Summons Killed', d.summonKills],
+            ['Own Summons Lost', d.ownSummonsLost],
+            ['Lane Effects Placed', d.laneEffectsPlaced],
+        ];
+        combatStats.forEach(([label, val]) => {
+            ctx.fillStyle = '#aabbcc';
+            ctx.font = menuFont('400', 14);
+            ctx.fillText(label, col1x, y);
+            ctx.fillStyle = '#fff';
+            ctx.font = menuFont('700', 14);
+            ctx.textAlign = 'right';
+            ctx.fillText('' + val, col1x + 300, y);
+            ctx.textAlign = 'left';
+            y += 24;
+        });
+
+        // Column 1: Movement
+        y += 15;
+        ctx.fillStyle = CONFIG.C.ACCENT;
+        ctx.font = menuFont('700', 18);
+        ctx.fillText('Movement', col1x, y);
+        y += 28;
+
+        const moveStats = [
+            ['Lane Switches', d.laneSwitches],
+            ['Dodged Projectiles', d.dodgedProjectiles],
+            ['Switches/Fight', (d.laneSwitches / fights).toFixed(1)],
+        ];
+        moveStats.forEach(([label, val]) => {
+            ctx.fillStyle = '#aabbcc';
+            ctx.font = menuFont('400', 14);
+            ctx.fillText(label, col1x, y);
+            ctx.fillStyle = '#fff';
+            ctx.font = menuFont('700', 14);
+            ctx.textAlign = 'right';
+            ctx.fillText('' + val, col1x + 300, y);
+            ctx.textAlign = 'left';
+            y += 24;
+        });
+
+        // Column 2: Spell type breakdown
+        y = 115;
+        ctx.fillStyle = CONFIG.C.ACCENT;
+        ctx.font = menuFont('700', 18);
+        ctx.textAlign = 'left';
+        ctx.fillText('Spell Usage', col2x, y);
+        y += 28;
+
+        const typeColors = {
+            projectile: '#ff6b35', instant: '#e74c3c', enchant: '#f39c12',
+            defensive: '#3498db', lane: '#9b59b6', aoe: '#e94560', summon: '#2ecc71'
+        };
+        const types = ['projectile', 'instant', 'enchant', 'defensive', 'lane', 'aoe', 'summon'];
+        types.forEach(type => {
+            const count = d.typeCast[type] || 0;
+            const pct = total > 0 ? count / total : 0;
+
+            ctx.fillStyle = '#aabbcc';
+            ctx.font = menuFont('400', 14);
+            ctx.textAlign = 'left';
+            ctx.fillText(type.charAt(0).toUpperCase() + type.slice(1), col2x, y);
+
+            // Bar
+            const barX = col2x + 100, barW = 180, barH = 12;
+            ctx.fillStyle = 'rgba(255,255,255,0.06)';
+            ctx.fillRect(barX, y - 10, barW, barH);
+            ctx.fillStyle = typeColors[type] || '#888';
+            ctx.fillRect(barX, y - 10, barW * pct, barH);
+
+            // Count
+            ctx.fillStyle = '#fff';
+            ctx.font = menuFont('700', 12);
+            ctx.textAlign = 'right';
+            ctx.fillText(count + ' (' + Math.round(pct * 100) + '%)', col2x + 350, y);
+            ctx.textAlign = 'left';
+            y += 28;
+        });
+
+        // Column 2: Affinity breakdown
+        y += 15;
+        ctx.fillStyle = CONFIG.C.ACCENT;
+        ctx.font = menuFont('700', 18);
+        ctx.fillText('Elements Used', col2x, y);
+        y += 28;
+
+        const affinities = Object.entries(d.affinityCast)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 6);
+        const affTotal = affinities.reduce((s, [, v]) => s + v, 0) || 1;
+        affinities.forEach(([aff, count]) => {
+            const pct = count / affTotal;
+            const label = aff === 'none' ? 'Physical' : aff.charAt(0).toUpperCase() + aff.slice(1);
+            const color = CONFIG.C[aff.toUpperCase()] || '#aabbcc';
+
+            ctx.fillStyle = color;
+            ctx.font = menuFont('600', 14);
+            ctx.textAlign = 'left';
+            ctx.fillText(label, col2x, y);
+
+            // Bar
+            const barX = col2x + 100, barW = 180, barH = 12;
+            ctx.fillStyle = 'rgba(255,255,255,0.06)';
+            ctx.fillRect(barX, y - 10, barW, barH);
+            ctx.fillStyle = color;
+            ctx.globalAlpha = 0.7;
+            ctx.fillRect(barX, y - 10, barW * pct, barH);
+            ctx.globalAlpha = 1;
+
+            ctx.fillStyle = '#fff';
+            ctx.font = menuFont('700', 12);
+            ctx.textAlign = 'right';
+            ctx.fillText(count + '', col2x + 350, y);
+            ctx.textAlign = 'left';
+            y += 26;
+        });
+    }
+
+    _getStyleLabel(style) {
+        // Find top 1-2 traits and generate a fun label
+        const entries = Object.entries(style).sort((a, b) => b[1] - a[1]);
+        const top = entries[0];
+        const second = entries[1];
+
+        // If no data, generic label
+        if (!top || top[1] < 0.05) return '— No Data Yet —';
+
+        const labels = {
+            assault:    ['Berserker', 'Blade Master', 'Relentless'],
+            defense:    ['Iron Wall', 'Guardian', 'Fortress'],
+            evasion:    ['Phantom', 'Shadow Dancer', 'Wind Walker'],
+            control:    ['Dominator', 'Puppeteer', 'Zone Master'],
+            summoner:   ['Beast Tamer', 'Summoner Lord', 'Pack Leader'],
+            resilience: ['Survivor', 'Endurance Master', 'Unbreakable'],
+        };
+
+        // Dual-class if second is > 60% of top
+        if (second && second[1] > top[1] * 0.6) {
+            const combos = {
+                'assault+control': 'Spell Blade',
+                'assault+evasion': 'Shadow Striker',
+                'assault+summoner': 'War Chief',
+                'assault+defense': 'Juggernaut',
+                'assault+resilience': 'Unstoppable Force',
+                'defense+resilience': 'Immovable Object',
+                'defense+control': 'Warden',
+                'defense+summoner': 'Bastion Lord',
+                'evasion+control': 'Trickster',
+                'evasion+summoner': 'Phantom Commander',
+                'evasion+assault': 'Shadow Striker',
+                'control+summoner': 'Grand Tactician',
+                'control+resilience': 'Iron Strategist',
+                'summoner+resilience': 'Immortal Summoner',
+            };
+            const comboKey = top[0] + '+' + second[0];
+            const reverseKey = second[0] + '+' + top[0];
+            if (combos[comboKey]) return '« ' + combos[comboKey] + ' »';
+            if (combos[reverseKey]) return '« ' + combos[reverseKey] + ' »';
+        }
+
+        // Single-class
+        const pool = labels[top[0]] || ['Fighter'];
+        const idx = Math.floor(top[1] * (pool.length - 0.01));
+        return '« ' + pool[Math.min(idx, pool.length - 1)] + ' »';
     }
 }
