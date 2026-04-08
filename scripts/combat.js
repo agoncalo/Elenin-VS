@@ -75,6 +75,7 @@ class Combat {
         if (!spell) return;
         if (!this.player.canCast(comboKey)) {
             this.effects.statusText(this.player.cx, this.player.y - 15, 'NOT READY', '#ff4444');
+            AudioEngine.playSfx('notReady');
             return;
         }
         this.executeSpell(comboKey, this.player);
@@ -102,13 +103,13 @@ class Combat {
         }
 
         switch (spell.type) {
-            case 'projectile': this._spawnProjectile(comboKey, caster, stats); break;
-            case 'instant':    this._instantAttack(comboKey, caster, stats); break;
-            case 'enchant':    this._applyEnchant(comboKey, caster, stats); break;
-            case 'defensive':  this._applyDefensive(comboKey, caster, stats); break;
-            case 'lane':       this._spawnLaneEffect(comboKey, caster, stats); break;
-            case 'aoe':        this._aoeAttack(comboKey, caster, stats); break;
-            case 'summon':     this._spawnSummon(comboKey, caster, stats); break;
+            case 'projectile': this._spawnProjectile(comboKey, caster, stats); AudioEngine.playSfx('projectile'); break;
+            case 'instant':    this._instantAttack(comboKey, caster, stats); AudioEngine.playSfx('slash'); break;
+            case 'enchant':    this._applyEnchant(comboKey, caster, stats); AudioEngine.playSfx('enchant'); break;
+            case 'defensive':  this._applyDefensive(comboKey, caster, stats); AudioEngine.playSfx('shield'); break;
+            case 'lane':       this._spawnLaneEffect(comboKey, caster, stats); AudioEngine.playSfx('lane'); break;
+            case 'aoe':        this._aoeAttack(comboKey, caster, stats); AudioEngine.playSfx('aoe'); break;
+            case 'summon':     this._spawnSummon(comboKey, caster, stats); AudioEngine.playSfx('summon'); break;
         }
     }
 
@@ -234,11 +235,13 @@ class Combat {
             target.freezeTimer = Math.max(target.freezeTimer, stats.freezeDur);
             enemySummons.forEach(s => { s.freezeTimer = Math.max(s.freezeTimer, stats.freezeDur); });
             if (isPlayer && this.stats) this.stats.recordStunFreeze();
+            AudioEngine.playSfx('freeze');
         }
         if (stats.stunDur) {
             target.stunTimer = Math.max(target.stunTimer, stats.stunDur);
             enemySummons.forEach(s => { s.stunTimer = Math.max(s.stunTimer, stats.stunDur); });
             if (isPlayer && this.stats) this.stats.recordStunFreeze();
+            AudioEngine.playSfx('stun');
         }
 
         // Big visual
@@ -309,12 +312,14 @@ class Combat {
             if (this.enemy.loyalty < 0) this.enemy.loyalty = 0;
             this.effects.statusText(summon.cx, summon.y - 20, 'LOYALTY -' + loyDrop, CONFIG.C.LOYALTY);
             if (this.stats) this.stats.recordSummonKill();
+            AudioEngine.playSfx('death');
         } else if (summon.owner === 'player') {
             const loyDrop = Math.ceil(summon.loyaltyVal * CONFIG.LOYALTY_PER_HP);
             this.player.loyalty -= loyDrop;
             if (this.player.loyalty < 0) this.player.loyalty = 0;
             this.effects.statusText(summon.cx, summon.y - 20, 'LOYALTY -' + loyDrop, CONFIG.C.LOYALTY);
             if (this.stats) this.stats.recordOwnSummonLost();
+            AudioEngine.playSfx('death');
         }
         // Clean up spellOnScreen
         const owner = summon.owner === 'player' ? this.player : this.enemy;
@@ -565,6 +570,7 @@ class Combat {
                 proj.facing = target.facing;
                 proj.hitTargets.clear();
                 this.effects.statusText(target.cx, target.y - 15, 'DEFLECT!', '#ffaaff');
+                AudioEngine.playSfx('deflect');
                 return;
             }
 
@@ -573,6 +579,7 @@ class Combat {
             const spell = SPELL_DATA[proj.comboKey];
             const dmg = this._calcDamage(proj.dmg, isPlayerProj ? this.player : this.enemy, target, spell);
             target.takeDamage(dmg, this.effects, isPlayerProj ? this.player : this.enemy);
+            AudioEngine.playSfx('hit');
 
             // Apply enchant effects from caster
             const caster = isPlayerProj ? this.player : this.enemy;
@@ -587,10 +594,12 @@ class Combat {
             if (proj.stats.freezeDur) {
                 target.freezeTimer = Math.max(target.freezeTimer, proj.stats.freezeDur);
                 if (isPlayerProj && this.stats) this.stats.recordStunFreeze();
+                AudioEngine.playSfx('freeze');
             }
             if (proj.stats.stunDur) {
                 target.stunTimer = Math.max(target.stunTimer, proj.stats.stunDur);
                 if (isPlayerProj && this.stats) this.stats.recordStunFreeze();
+                AudioEngine.playSfx('stun');
             }
             if (proj.stats.poisonDmg) {
                 target.burnTimer = proj.stats.poisonDur || 3000;
@@ -614,6 +623,7 @@ class Combat {
                     proj.dirX *= -1;
                     proj.owner = s.owner;
                     this.effects.statusText(s.cx, s.y - 10, 'DEFLECT!', '#aaddff');
+                    AudioEngine.playSfx('deflect');
                     return;
                 }
 
@@ -679,6 +689,7 @@ class Combat {
                 if (a.hp < a.maxHp) {
                     a.hp = Math.min(a.maxHp, a.hp + summon.healAmt);
                     this.effects.healNumber(a.cx, a.y, summon.healAmt);
+                    AudioEngine.playSfx('heal');
                 }
             }
         });

@@ -24,6 +24,17 @@
     function setState(newState, data) {
         state = newState;
         input.reset();
+
+        // Music: menu-family states → menu theme, combat → enemy affinity
+        if (newState === 'combat') {
+            AudioEngine.playMusic(data.affinity || 'fire');
+        } else if (newState === 'defeat') {
+            AudioEngine.stopMusic();
+            AudioEngine.playSfx('defeat');
+        } else {
+            AudioEngine.playMusic('menu');
+        }
+
         switch (newState) {
             case 'menu':
                 scene = new MenuScene(input);
@@ -59,6 +70,18 @@
         lastTime = now;
 
         input.update(dt);
+
+        // Mute toggle (M key)
+        if (input.wasPressed('KeyM')) {
+            AudioEngine.toggleMute();
+        }
+        // Ensure AudioContext is running after user interaction
+        AudioEngine.resume();
+        // Start menu music on first interaction
+        if (!AudioEngine._menuStarted && Object.keys(input.keys).some(k => input.keys[k])) {
+            AudioEngine.playMusic('menu');
+            AudioEngine._menuStarted = true;
+        }
 
         let result;
         switch (state) {
@@ -107,6 +130,8 @@
                 result = combat.update(dt);
                 if (result === 'win') {
                     defeated.add(currentEnemy.id);
+                    AudioEngine.stopMusic();
+                    AudioEngine.playSfx('victory');
                     setState('enemySelect');
                 } else if (result === 'lose') {
                     setState('defeat');

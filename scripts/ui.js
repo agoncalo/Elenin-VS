@@ -360,7 +360,15 @@ const UI = {
         ctx.fillStyle = 'rgba(255,255,255,0.3)';
         ctx.font = this.font('400', 10);
         ctx.textAlign = 'center';
-        ctx.fillText('\u2190 \u2192 \u2191 \u2193 Move    Z X C Cast', CONFIG.WIDTH / 2, 44);
+        ctx.fillText('\u2190 \u2192 \u2191 \u2193 Move    Z X C Cast    M Mute', CONFIG.WIDTH / 2, 44);
+
+        // Mute indicator
+        if (typeof AudioEngine !== 'undefined' && AudioEngine.isMuted()) {
+            ctx.fillStyle = '#ff5555';
+            ctx.font = this.font('700', 11);
+            ctx.textAlign = 'right';
+            ctx.fillText('\uD83D\uDD07 MUTED', CONFIG.WIDTH - 8, 44);
+        }
 
         // Separator line
         ctx.strokeStyle = CONFIG.C.ACCENT;

@@ -85,7 +85,15 @@ class MenuScene {
         ctx.fillStyle = 'rgba(255,255,255,0.25)';
         ctx.font = menuFont('400', 12);
         ctx.textAlign = 'center';
-        ctx.fillText('\u2191 \u2193 Navigate    Z / Enter Select', CONFIG.WIDTH / 2, CONFIG.HEIGHT - 30);
+        ctx.fillText('\u2191 \u2193 Navigate    Z / Enter Select    M Mute', CONFIG.WIDTH / 2, CONFIG.HEIGHT - 30);
+
+        // Mute indicator
+        if (typeof AudioEngine !== 'undefined' && AudioEngine.isMuted()) {
+            ctx.fillStyle = '#ff5555';
+            ctx.font = menuFont('700', 13);
+            ctx.textAlign = 'right';
+            ctx.fillText('\uD83D\uDD07 MUTED', CONFIG.WIDTH - 15, CONFIG.HEIGHT - 28);
+        }
     }
 }
 
