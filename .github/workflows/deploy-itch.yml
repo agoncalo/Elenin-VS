@@ -11,11 +11,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Deploy to itch.io
-        uses: manleydev/butler-publish-itchio-action@v1.0.3
+      - name: Install butler
+        run: |
+          curl -L -o butler.zip https://broth.itch.zone/butler/linux-amd64/LATEST/archive/default
+          unzip butler.zip
+          chmod +x butler
+          echo "$PWD" >> $GITHUB_PATH
+
+      - name: Push to itch.io
+        run: butler push . titoim/elenin-vs:html5
         env:
-          BUTLER_CREDENTIALS: ${{ secrets.BUTLER_API_KEY }}
-          CHANNEL: html5
-          ITCH_GAME: elenin-vs
-          ITCH_USER: titoim
-          PACKAGE: .
+          BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
