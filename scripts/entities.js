@@ -210,6 +210,7 @@ class Projectile extends Entity {
         this.staticTimer = stats.duration || 0;
         this.tickTimer = stats.tickRate || 400;
         this.tickCurrent = 0;
+        this.hitSomething = false; // track if it connected with anything
 
         // Charge delay
         this.chargeTime = stats.chargeTime || 0;
@@ -234,7 +235,7 @@ class Projectile extends Entity {
             this.x += this.speed * this.dirX * (dt / 16);
         }
 
-        if (this.x < CONFIG.FIELD_LEFT - 50 || this.x > CONFIG.FIELD_RIGHT + 50) {
+        if (this.x < CONFIG.FIELD_LEFT - 20 || this.x > CONFIG.FIELD_RIGHT + 20) {
             this.alive = false;
         }
     }

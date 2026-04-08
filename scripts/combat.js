@@ -395,6 +395,24 @@ class Combat {
                 const owner = proj.owner === 'player' ? this.player : this.enemy;
                 const sameKey = this.projectiles.filter(p => p.alive && p.comboKey === proj.comboKey && p.owner === proj.owner);
                 if (sameKey.length <= 0) delete owner.spellOnScreen[proj.comboKey];
+
+                // Backline loyalty penalty: unblocked projectile reached the far wall
+                if (!proj.hitSomething && !proj.isStatic && proj.charged) {
+                    const hitBackline = (proj.dirX > 0 && proj.x >= CONFIG.FIELD_RIGHT - 10)
+                                     || (proj.dirX < 0 && proj.x <= CONFIG.FIELD_LEFT + 10);
+                    if (hitBackline) {
+                        const victim = proj.dirX > 0 ? this.enemy : this.player;
+                        const drop = 2;
+                        victim.loyalty -= drop;
+                        if (victim.loyalty < 0) victim.loyalty = 0;
+                        this.effects.statusText(
+                            proj.dirX > 0 ? CONFIG.FIELD_RIGHT - 30 : CONFIG.FIELD_LEFT + 30,
+                            CONFIG.FIELD_TOP + proj.lane * CONFIG.LANE_HEIGHT + CONFIG.LANE_HEIGHT / 2,
+                            'LOYALTY -' + drop, CONFIG.C.LOYALTY
+                        );
+                    }
+                }
+
                 return false;
             }
             return true;
@@ -579,6 +597,7 @@ class Combat {
             const spell = SPELL_DATA[proj.comboKey];
             const dmg = this._calcDamage(proj.dmg, isPlayerProj ? this.player : this.enemy, target, spell);
             target.takeDamage(dmg, this.effects, isPlayerProj ? this.player : this.enemy);
+            proj.hitSomething = true;
             AudioEngine.playSfx('hit');
 
             // Apply enchant effects from caster
@@ -632,6 +651,7 @@ class Combat {
                 const died = s.takeDamage(proj.dmg, this.effects);
                 if (died === true) this._onSummonKilled(s, isPlayerProj ? this.player : this.enemy);
                 else if (died === 'regrow') this._onHydraRegrow(s);
+                proj.hitSomething = true;
                 if (proj.stats.poisonDmg) {
                     s.burnTimer = proj.stats.poisonDur || 3000;
                     s.burnDmg = proj.stats.poisonDmg;

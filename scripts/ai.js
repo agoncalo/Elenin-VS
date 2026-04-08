@@ -79,16 +79,33 @@ class EnemyAI {
     // ----- Movement decisions -----
     _decideMovement(combat) {
         const f = this.fighter;
+        const hpPct = f.hp / f.maxHp;
+        const loyPct = f.loyalty / f.maxLoyalty;
+        const playerHpPct = combat.player.hp / combat.player.maxHp;
+        const playerLoyPct = combat.player.loyalty / combat.player.maxLoyalty;
 
         // Tactical: advance to pressure when player is low or we have shield
-        if (this.tactical && (combat.player.hp < combat.player.maxHp * 0.3 || f.shielded)) {
+        if (this.tactical && (playerHpPct < 0.3 || playerLoyPct < 0.25 || f.shielded)) {
             this.moveDir = -1; // advance toward midline
             return;
         }
 
-        // Tactical: retreat when low HP
-        if (this.tactical && f.hp < f.maxHp * 0.3) {
+        // Tactical: retreat when low HP to avoid direct damage
+        if (this.tactical && hpPct < 0.3) {
             this.moveDir = 1; // retreat
+            return;
+        }
+
+        // Loyalty-aware posture: if loyalty is low but HP is fine, stay back
+        // to intercept backline threats rather than pushing forward
+        if (this.tactical && loyPct < 0.4 && hpPct > 0.5) {
+            this.moveDir = 1; // retreat to cover more backline
+            return;
+        }
+
+        // HP is low but loyalty is fine: play aggressive to finish fast
+        if (this.tactical && hpPct < 0.4 && loyPct > 0.6) {
+            this.moveDir = -1; // push forward for damage
             return;
         }
 
@@ -114,6 +131,19 @@ class EnemyAI {
                 this.trapIntent = false; // in position, ready to cast
             }
             return;
+        }
+
+        // Defense: intercept unblocked player projectiles heading for our backline
+        // Higher urgency when loyalty is low
+        if (this.difficulty >= 2) {
+            const loyPct = f.loyalty / f.maxLoyalty;
+            const interceptUrgency = loyPct < 0.35 ? 1.0 : (loyPct < 0.6 ? 0.7 : 0.4);
+            const incoming = this._unguardedIncoming(combat);
+            if (incoming !== null && incoming !== f.lane && !laneHazard && Math.random() < interceptUrgency) {
+                if (incoming > f.lane) f.switchLane(1);
+                else f.switchLane(-1);
+                return;
+            }
         }
 
         // Shield through hazards: if we have shield/invis, stay and fight
@@ -173,6 +203,34 @@ class EnemyAI {
             if (down < CONFIG.LANE_COUNT && !this._laneHasThreats(combat, down) && !this._laneHasHazard(combat, down)) return down;
         }
         return currentLane;
+    }
+
+    // Find the lane of the most threatening unblocked incoming projectile
+    _unguardedIncoming(combat) {
+        const f = this.fighter;
+        // Find player projectiles heading toward our backline that nothing is blocking
+        const threats = combat.projectiles.filter(p =>
+            p.alive && p.owner === 'player' && p.charged && !p.isStatic
+            && p.x > CONFIG.MIDPOINT - 80
+        );
+        if (threats.length === 0) return null;
+
+        // Check which threat lanes have no blocker (us or our summons)
+        const ourSummonLanes = new Set();
+        combat.summons.forEach(s => {
+            if (s.alive && s.owner === 'enemy') s.getLanes().forEach(l => ourSummonLanes.add(l));
+        });
+
+        let best = null, bestX = -Infinity;
+        for (const p of threats) {
+            // Already in our lane — we'll block it
+            if (p.lane === f.lane) continue;
+            // A friendly summon is in the way
+            if (ourSummonLanes.has(p.lane)) continue;
+            // Pick the closest (most urgent) one
+            if (p.x > bestX) { bestX = p.x; best = p.lane; }
+        }
+        return best;
     }
 
     // Find the lane with the most valuable player summon to hunt
@@ -343,6 +401,15 @@ class EnemyAI {
     _pickTactical(available, combat) {
         const f = this.fighter;
         const player = combat.player;
+        const hpPct = f.hp / f.maxHp;
+        const loyPct = f.loyalty / f.maxLoyalty;
+        const playerLoyPct = player.loyalty / player.maxLoyalty;
+
+        // Resource posture flags
+        const loyaltyThreatened = loyPct < 0.4;          // our loyalty is low
+        const hpThreatened = hpPct < 0.35;               // our HP is low
+        const playerLoyaltyWeak = playerLoyPct < 0.35;   // player loyalty is exploitable
+
         const scored = available.map(key => {
             const spell = SPELL_DATA[key];
             if (!spell) return { key, score: 0 };
@@ -350,6 +417,38 @@ class EnemyAI {
 
             const stats = spell.stats;
             const type = spell.type;
+
+            // === RESOURCE-AWARE SCORING ===
+
+            // When OUR loyalty is threatened: prioritize summon defense & backline interception
+            if (loyaltyThreatened) {
+                // Summons act as backline blockers — deploy them urgently
+                if (type === 'summon') score += 3;
+                // Defensive spells protect us while we stabilize
+                if (type === 'defensive') score += 2;
+                // De-prioritize risky aggression that leaves lanes open
+                if (type === 'lane' && f.lane !== player.lane) score -= 1;
+            }
+
+            // When OUR HP is threatened but loyalty is fine: go aggressive to end it
+            if (hpThreatened && !loyaltyThreatened) {
+                if (stats.dmg && stats.dmg >= 3) score += 2.5;
+                if (type === 'aoe') score += 2;
+                if (type === 'enchant') score += 1.5; // boost damage output
+                // Less value on summons — they won't save us in time
+                if (type === 'summon') score -= 1;
+            }
+
+            // When PLAYER loyalty is weak: exploit it with backline pressure & summon kills
+            if (playerLoyaltyWeak) {
+                // Kill their summons for loyalty cascades
+                if (type === 'aoe') score += 3;
+                if (type === 'instant') score += 1.5; // slash summons
+                // Backline projectiles chip loyalty
+                if (type === 'projectile') score += 1.5;
+            }
+
+            // === END RESOURCE-AWARE ===
 
             // Prioritize healing when HP low
             if (stats.healAmt && f.hp < f.maxHp * 0.5) {
@@ -371,6 +470,7 @@ class EnemyAI {
             if (type === 'summon') {
                 if (ownSummons === 0) {
                     score += 4; // no summons at all: high priority
+                    if (loyaltyThreatened) score += 2; // desperate: summons block backline
                 } else if (ownSummons === 1) {
                     score += 2.5; // only one: want a pair
                 }
@@ -431,6 +531,14 @@ class EnemyAI {
             // AOE when player is stunned/frozen (guaranteed hit)
             if (type === 'aoe' && (player.isStunned() || player.freezeTimer > 0)) {
                 score += 4;
+            }
+
+            // Backline pressure: projectiles in empty lanes = free loyalty damage
+            if (type === 'projectile' && f.lane !== player.lane) {
+                const summonBlocker = combat.summons.some(s =>
+                    s.alive && s.owner === 'player' && s.getLanes().includes(f.lane));
+                if (!summonBlocker) score += 3; // guaranteed backline hit
+                else score += 0.5; // might hit summon at least
             }
 
             // Prefer attacks when player is low

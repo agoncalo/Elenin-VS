@@ -28,7 +28,7 @@ const CONFIG = {
 
     // Gameplay
     BASE_HP: 50,
-    BASE_LOYALTY: 30,
+    BASE_LOYALTY: 50,
     PLAYER_SPEED: 3,
     LANE_SWITCH_TIME: 150,       // ms to jump between lanes
     SPELL_INPUT_TIMEOUT: 1500,   // ms to finish a 3-key combo
