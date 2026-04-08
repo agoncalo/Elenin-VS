@@ -10,7 +10,10 @@
     const input = new InputManager();
 
     // Player state (persists across fights in session)
-    const defeated = new Set();          // enemy IDs beaten this session
+    const defeated = new Set(JSON.parse(localStorage.getItem('eleninVS_defeated') || '[]'));
+    function saveDefeated() {
+        localStorage.setItem('eleninVS_defeated', JSON.stringify([...defeated]));
+    }
     let playerSkin = PLAYER_SKINS[0];    // current skin (default black)
     const playerStats = new PlayerStats();
 
@@ -52,7 +55,7 @@
                 scene = new StatsScene(input, playerStats);
                 break;
             case 'enemySelect':
-                scene = new EnemySelectScene(input);
+                scene = new EnemySelectScene(input, defeated);
                 break;
             case 'combat':
                 currentEnemy = data;
@@ -130,6 +133,7 @@
                 result = combat.update(dt);
                 if (result === 'win') {
                     defeated.add(currentEnemy.id);
+                    saveDefeated();
                     AudioEngine.stopMusic();
                     AudioEngine.playSfx('victory');
                     setState('enemySelect');

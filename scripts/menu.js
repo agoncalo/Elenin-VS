@@ -207,9 +207,16 @@ class SpellListScene {
 
 // ---- Enemy Select ----
 class EnemySelectScene {
-    constructor(input) {
+    constructor(input, defeated) {
         this.input = input;
+        this.defeated = defeated || new Set();
         this.selected = 0;
+    }
+
+    _isUnlocked(index) {
+        // First enemy is always available; others require beating the previous one
+        if (index === 0) return true;
+        return this.defeated.has(ENEMIES[index - 1].id);
     }
 
     update(dt) {
@@ -217,7 +224,9 @@ class EnemySelectScene {
         if (this.input.wasPressed('ArrowDown')) this.selected = (this.selected + 1) % ENEMIES.length;
         if (this.input.wasPressed('Escape') || this.input.wasPressed('Backspace')) return 'back';
         if (this.input.wasPressed('Enter') || this.input.wasPressed('KeyZ')) {
-            return { action: 'start', enemy: ENEMIES[this.selected] };
+            if (this._isUnlocked(this.selected)) {
+                return { action: 'start', enemy: ENEMIES[this.selected] };
+            }
         }
         return null;
     }
@@ -250,15 +259,38 @@ class EnemySelectScene {
         ENEMIES.forEach((enemy, i) => {
             const y = 75 + i * 62;
             const sel = i === this.selected;
+            const unlocked = this._isUnlocked(i);
+            const beaten = this.defeated.has(enemy.id);
 
             if (sel) {
+                const borderColor = unlocked ? CONFIG.C.ACCENT : '#555555';
                 Sprites.roundRect(ctx, listX, y, listW, 54, 8,
-                    'rgba(233,69,96,0.15)', CONFIG.C.ACCENT);
+                    unlocked ? 'rgba(233,69,96,0.15)' : 'rgba(80,80,80,0.15)', borderColor);
+            }
+
+            if (!unlocked) {
+                // Locked enemy — show silhouette
+                ctx.fillStyle = '#444455';
+                ctx.font = menuFont('400', 14);
+                ctx.textAlign = 'left';
+                ctx.fillText('\uD83D\uDD12  ???', listX + 22, y + 24);
+                ctx.fillStyle = '#334';
+                ctx.font = menuFont('400', 11);
+                ctx.fillText('Defeat ' + ENEMIES[i - 1].name + ' to unlock', listX + 22, y + 42);
+                return;
             }
 
             // Color bar
             ctx.fillStyle = enemy.color;
             Sprites.roundRect(ctx, listX + 8, y + 8, 4, 38, 2, enemy.color);
+
+            // Beaten checkmark
+            if (beaten) {
+                ctx.fillStyle = '#44dd66';
+                ctx.font = menuFont('700', 14);
+                ctx.textAlign = 'left';
+                ctx.fillText('\u2713', listX + listW - 35, y + 30);
+            }
 
             // Name & title
             ctx.fillStyle = sel ? '#fff' : '#778899';
@@ -289,6 +321,19 @@ class EnemySelectScene {
         Sprites.roundRect(ctx, panelX, panelY, panelW, panelH, 12, 'rgba(0,0,0,0.5)', 'rgba(255,255,255,0.06)');
 
         const sel = ENEMIES[this.selected];
+        const unlocked = this._isUnlocked(this.selected);
+
+        if (!unlocked) {
+            // Locked enemy detail panel
+            ctx.fillStyle = '#445566';
+            ctx.font = menuFont('700', 20);
+            ctx.textAlign = 'center';
+            ctx.fillText('\uD83D\uDD12 LOCKED', panelX + panelW / 2, panelY + 120);
+            ctx.fillStyle = '#667788';
+            ctx.font = menuFont('400', 14);
+            ctx.fillText('Defeat ' + ENEMIES[this.selected - 1].name + ' to unlock', panelX + panelW / 2, panelY + 155);
+            return;
+        }
 
         // Enemy ninja preview
         const enemySkin = PLAYER_SKINS.find(s => s.unlockEnemy === sel.id);
