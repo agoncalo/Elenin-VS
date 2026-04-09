@@ -130,15 +130,34 @@
                 break;
 
             case 'combat':
-                result = combat.update(dt);
-                if (result === 'win') {
-                    defeated.add(currentEnemy.id);
-                    saveDefeated();
-                    AudioEngine.stopMusic();
-                    AudioEngine.playSfx('victory');
-                    setState('enemySelect');
-                } else if (result === 'lose') {
-                    setState('defeat');
+                // Pause toggle
+                if (input.wasPressed('Escape')) {
+                    combat.paused = !combat.paused;
+                    combat.pauseSelected = 0;
+                }
+                if (combat.paused) {
+                    // Pause menu navigation
+                    if (input.wasPressed('ArrowUp') || input.wasPressed('ArrowDown')) {
+                        combat.pauseSelected = 1 - combat.pauseSelected;
+                    }
+                    if (input.wasPressed('Enter') || input.wasPressed('KeyZ')) {
+                        if (combat.pauseSelected === 0) {
+                            combat.paused = false; // Continue
+                        } else {
+                            setState('menu'); // Quit
+                        }
+                    }
+                } else {
+                    result = combat.update(dt);
+                    if (result === 'win') {
+                        defeated.add(currentEnemy.id);
+                        saveDefeated();
+                        AudioEngine.stopMusic();
+                        AudioEngine.playSfx('victory');
+                        setState('enemySelect');
+                    } else if (result === 'lose') {
+                        setState('defeat');
+                    }
                 }
                 break;
 

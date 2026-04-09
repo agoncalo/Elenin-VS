@@ -37,10 +37,16 @@ class Combat {
         this.result = null; // null | 'win' | 'lose'
         this.resultTimer = 0;
         this.paused = false;
+        this.pauseSelected = 0; // 0 = Continue, 1 = Quit
 
         // Cast history for HUD
         this.castHistory = [];
         this.enemyCastHistory = [];
+
+        // Windup / telegraph system
+        this.windups = [];
+        // Lingering kanji floaters after windups
+        this._kanjiFloaters = [];
 
         // Battlefield theme based on enemy affinity
         this.theme = this._getTheme(enemyData.affinity);
@@ -102,14 +108,13 @@ class Combat {
             if (this.enemyCastHistory.length > 8) this.enemyCastHistory.length = 8;
         }
 
-        switch (spell.type) {
-            case 'projectile': this._spawnProjectile(comboKey, caster, stats); AudioEngine.playSfx('projectile'); break;
-            case 'instant':    this._instantAttack(comboKey, caster, stats); AudioEngine.playSfx('slash'); break;
-            case 'enchant':    this._applyEnchant(comboKey, caster, stats); AudioEngine.playSfx('enchant'); break;
-            case 'defensive':  this._applyDefensive(comboKey, caster, stats); AudioEngine.playSfx('shield'); break;
-            case 'lane':       this._spawnLaneEffect(comboKey, caster, stats); AudioEngine.playSfx('lane'); break;
-            case 'aoe':        this._aoeAttack(comboKey, caster, stats); AudioEngine.playSfx('aoe'); break;
-            case 'summon':     this._spawnSummon(comboKey, caster, stats); AudioEngine.playSfx('summon'); break;
+        if (spell.type === 'projectile' && spell.affinity === 'none') {
+            // Non-elemental projectiles fire immediately
+            this._spawnProjectile(comboKey, caster, stats);
+            AudioEngine.playSfx('projectile');
+        } else {
+            // All non-projectile spells AND elemental projectiles go through the windup telegraph system
+            this._startWindup(spell.type, comboKey, caster, stats);
         }
     }
 
@@ -137,6 +142,7 @@ class Combat {
             if (dist <= range) {
                 const dmg = this._calcDamage(stats.dmg, caster, target, SPELL_DATA[comboKey]);
                 target.takeDamage(dmg, this.effects, caster);
+                this._addCutLine(target.cx, target.cy);
             }
         }
 
@@ -149,6 +155,7 @@ class Combat {
                 const died = s.takeDamage(dmg, this.effects);
                 if (died === true) this._onSummonKilled(s, caster);
                 else if (died === 'regrow') this._onHydraRegrow(s);
+                this._addCutLine(s.cx, s.cy);
             }
         });
 
@@ -162,6 +169,629 @@ class Combat {
         // Animated slash stored as a temporary visual
         this._slashEffects = this._slashEffects || [];
         this._slashEffects.push({ x, y, range, facing, timer: 300, maxTimer: 300 });
+    }
+
+    _addCutLine(x, y) {
+        // Diagonal flash line on hit targets
+        this._cutLines = this._cutLines || [];
+        this._cutLines.push({ x, y, timer: 350, maxTimer: 350 });
+    }
+
+    // ===== WINDUP / TELEGRAPH SYSTEM =====
+    // ~20 frames at 60fps per spell type for reactable telegraphs
+    _windupDuration(type) {
+        const durations = { projectile: 333, instant: 333, enchant: 333, defensive: 300, lane: 333, aoe: 400, summon: 250 };
+        return durations[type] || 333;
+    }
+
+    _startWindup(type, comboKey, caster, stats) {
+        const dur = this._windupDuration(type);
+        this.windups.push({
+            type, comboKey, caster, stats,
+            timer: dur, maxDuration: dur,
+            executed: false,
+            // Snapshot lane at cast time so lane switching doesn't move the telegraph
+            // (sword slash is the exception — it tracks the caster live)
+            castLane: caster.lane,
+            castX: caster.cx,
+            castY: caster.cy,
+        });
+    }
+
+    _updateWindups(dt) {
+        // Clear IAI eyes-closed flag on all fighters
+        this.player._eyesClosed = false;
+        this.enemy._eyesClosed = false;
+
+        this.windups.forEach(w => {
+            if (w.executed) return;
+            // Cancel if caster died
+            if (w.caster.hp <= 0) { w.executed = true; return; }
+            // Close eyes during IAI windup
+            if (w.type === 'instant') w.caster._eyesClosed = true;
+            w.timer -= dt;
+            if (w.timer <= 0) {
+                w.executed = true;
+                this._executeWindupEffect(w);
+            }
+        });
+        this.windups = this.windups.filter(w => !w.executed);
+    }
+
+    _executeWindupEffect(w) {
+        const sfxMap = { projectile: 'projectile', instant: 'slash', enchant: 'enchant', defensive: 'shield', lane: 'lane', aoe: 'aoe', summon: 'summon' };
+        AudioEngine.playSfx(sfxMap[w.type] || 'projectile');
+        // For lane/summon, use the snapshotted lane so switching lanes during windup doesn't move the effect
+        const needsSnap = w.type === 'lane' || w.type === 'summon';
+        const origLane = w.caster.lane;
+        if (needsSnap) w.caster.lane = w.castLane;
+        switch (w.type) {
+            case 'projectile': this._spawnProjectile(w.comboKey, w.caster, w.stats); break;
+            case 'instant':   this._instantAttack(w.comboKey, w.caster, w.stats); break;
+            case 'enchant':   this._applyEnchant(w.comboKey, w.caster, w.stats); break;
+            case 'defensive': this._applyDefensive(w.comboKey, w.caster, w.stats); break;
+            case 'lane':      this._spawnLaneEffect(w.comboKey, w.caster, w.stats); break;
+            case 'aoe':       this._aoeAttack(w.comboKey, w.caster, w.stats); break;
+            case 'summon':    this._spawnSummon(w.comboKey, w.caster, w.stats); break;
+        }
+        if (needsSnap) w.caster.lane = origLane;
+
+        // Spawn lingering kanji floater for elemental spells
+        const spell = SPELL_DATA[w.comboKey];
+        if (spell && spell.affinity !== 'none') {
+            const dir = w.caster.facing === 'right' ? 1 : -1;
+            const kx = w.castX + dir * (CONFIG.SPRITE * 0.6);
+            const ky = w.castY;
+            const kanjiMap = { fire: '\u706B', ice: '\u6C37', shock: '\u96F7', poison: '\u6BD2', earth: '\u571F' };
+            this._kanjiFloaters.push({
+                x: kx, y: ky,
+                kanji: kanjiMap[spell.affinity] || '\u8853',
+                color: AFFINITY_COLORS[spell.affinity] || '#fff',
+                timer: 600, maxTimer: 600,
+                driftX: dir * (0.6 + Math.random() * 0.3),
+                driftY: 0,
+            });
+        }
+    }
+
+    _drawWindups(ctx) {
+        this.windups.forEach(w => {
+            if (w.executed) return;
+            const progress = 1 - w.timer / w.maxDuration;
+            switch (w.type) {
+                case 'projectile': this._drawProjectileKanji(ctx, w, progress); break;
+                case 'instant':   this._drawIAIWindup(ctx, w, progress); break;
+                case 'enchant':   this._drawKanjiWindup(ctx, w, progress); break;
+                case 'defensive': this._drawDefensiveWindup(ctx, w, progress); break;
+                case 'lane':      this._drawLaneWindup(ctx, w, progress); break;
+                case 'aoe':       this._drawAOEWindup(ctx, w, progress); break;
+                case 'summon':    this._drawSummonWindup(ctx, w, progress); break;
+            }
+        });
+    }
+
+    // --- Shared: Elemental kanji in front of caster during any windup ---
+    _drawCasterKanji(ctx, w, progress) {
+        const c = w.caster;
+        const dir = c.facing === 'right' ? 1 : -1;
+        const spell = SPELL_DATA[w.comboKey];
+        if (!spell || spell.affinity === 'none') return;
+        const color = AFFINITY_COLORS[spell.affinity] || '#fff';
+        const kanjiMap = { fire: '\u706B', ice: '\u6C37', shock: '\u96F7', poison: '\u6BD2', earth: '\u571F' };
+        const kanji = kanjiMap[spell.affinity] || '\u8853';
+        const t = Date.now();
+
+        const kx = c.cx + dir * (CONFIG.SPRITE * 0.6);
+        const ky = c.cy;
+        const ringR = 14 + progress * 10;
+        ctx.globalAlpha = 0.1 + progress * 0.3;
+        ctx.strokeStyle = color;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 12 + progress * 10;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(kx, ky, ringR, 0, Math.PI * 2 * progress);
+        ctx.stroke();
+
+        // Orbiting element sparkles converging inward
+        const sparkCount = 5;
+        for (let i = 0; i < sparkCount; i++) {
+            const angle = (i / sparkCount) * Math.PI * 2 + t / 220;
+            const dist = (30 + Math.sin(t / 150 + i) * 5) * (1 - progress * 0.7);
+            const sx = kx + Math.cos(angle) * dist;
+            const sy = ky + Math.sin(angle) * dist;
+            ctx.globalAlpha = 0.25 + progress * 0.5;
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(sx, sy, 1.2 + progress * 1.8, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // Kanji scaling in
+        const scale = 0.2 + progress * 0.8;
+        const fontSize = Math.floor(24 * scale);
+        const kanjiAlpha = progress * progress;
+        ctx.globalAlpha = kanjiAlpha * 0.9;
+        ctx.fillStyle = color;
+        ctx.shadowBlur = 18 + progress * 12;
+        ctx.font = fontSize + 'px serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(kanji, kx, ky);
+
+        // Flash burst at the end
+        if (progress > 0.85) {
+            const burstAlpha = (progress - 0.85) / 0.15;
+            ctx.globalAlpha = burstAlpha * 0.5;
+            ctx.fillStyle = '#fff';
+            ctx.shadowColor = color;
+            ctx.shadowBlur = 25;
+            ctx.beginPath();
+            ctx.arc(kx, ky, 6 + burstAlpha * 14, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        ctx.shadowBlur = 0;
+        ctx.restore();
+    }
+
+    // --- Elemental Projectile Kanji Telegraph ---
+    _drawProjectileKanji(ctx, w, progress) {
+        this._drawCasterKanji(ctx, w, progress);
+    }
+
+    // --- IAI Slash Telegraph ---
+    _drawIAIWindup(ctx, w, progress) {
+        const c = w.caster;
+        const dir = c.facing === 'right' ? 1 : -1;
+        const t = Date.now();
+        ctx.save();
+
+        // --- Sheathed katana in front of caster ---
+        const swordX = c.cx + dir * (CONFIG.SPRITE * 0.45);
+        const swordY = c.cy + 4;
+        const swordLen = 26;
+        const swordAngle = dir > 0 ? -0.3 : Math.PI + 0.3;
+
+        // Scabbard (dark)
+        ctx.globalAlpha = 0.5 + progress * 0.4;
+        ctx.strokeStyle = '#334';
+        ctx.lineWidth = 5;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(swordX, swordY);
+        ctx.lineTo(swordX + Math.cos(swordAngle) * swordLen, swordY + Math.sin(swordAngle) * swordLen);
+        ctx.stroke();
+
+        // Blade peeking out — slides further with progress (drawing the sword)
+        const bladeReveal = progress * 0.85;
+        const bladeLen = swordLen * bladeReveal;
+        const bladeEndX = swordX + Math.cos(swordAngle) * bladeLen;
+        const bladeEndY = swordY + Math.sin(swordAngle) * bladeLen;
+        ctx.strokeStyle = '#ddeeff';
+        ctx.shadowColor = '#aaddff';
+        ctx.shadowBlur = 6 + progress * 10;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(swordX, swordY);
+        ctx.lineTo(bladeEndX, bladeEndY);
+        ctx.stroke();
+
+        // Tsuba (guard) at the hilt
+        ctx.fillStyle = '#aa8844';
+        ctx.shadowBlur = 0;
+        ctx.beginPath();
+        const tsubaX = swordX + Math.cos(swordAngle) * 2;
+        const tsubaY = swordY + Math.sin(swordAngle) * 2;
+        ctx.arc(tsubaX, tsubaY, 3, 0, Math.PI * 2);
+        ctx.fill();
+
+        // --- Star flash blinking intensifies as windup progresses ---
+        const blinkSpeed = 120 - progress * 80;
+        const blinkAlpha = (Math.sin(t / blinkSpeed) * 0.5 + 0.5);
+        const starAlpha = blinkAlpha * (0.3 + progress * 0.7);
+        const starSize = 4 + progress * 8;
+        const starX = bladeEndX;
+        const starY = bladeEndY;
+
+        if (starAlpha > 0.05) {
+            ctx.globalAlpha = starAlpha;
+            ctx.fillStyle = '#ffffff';
+            ctx.shadowColor = '#aaddff';
+            ctx.shadowBlur = 14 + progress * 10;
+
+            // 4-point star shape
+            ctx.beginPath();
+            ctx.moveTo(starX, starY - starSize);
+            ctx.lineTo(starX + starSize * 0.22, starY - starSize * 0.22);
+            ctx.lineTo(starX + starSize, starY);
+            ctx.lineTo(starX + starSize * 0.22, starY + starSize * 0.22);
+            ctx.lineTo(starX, starY + starSize);
+            ctx.lineTo(starX - starSize * 0.22, starY + starSize * 0.22);
+            ctx.lineTo(starX - starSize, starY);
+            ctx.lineTo(starX - starSize * 0.22, starY - starSize * 0.22);
+            ctx.closePath();
+            ctx.fill();
+
+            // Inner hot-white core
+            ctx.globalAlpha = starAlpha * 0.9;
+            const coreS = starSize * 0.35;
+            ctx.beginPath();
+            ctx.moveTo(starX, starY - coreS);
+            ctx.lineTo(starX + coreS * 0.22, starY - coreS * 0.22);
+            ctx.lineTo(starX + coreS, starY);
+            ctx.lineTo(starX + coreS * 0.22, starY + coreS * 0.22);
+            ctx.lineTo(starX, starY + coreS);
+            ctx.lineTo(starX - coreS * 0.22, starY + coreS * 0.22);
+            ctx.lineTo(starX - coreS, starY);
+            ctx.lineTo(starX - coreS * 0.22, starY - coreS * 0.22);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        // Secondary smaller star at tsuba
+        if (progress > 0.35) {
+            const blink2 = Math.sin(t / (90 - progress * 50) + 1.8) * 0.5 + 0.5;
+            const s2a = blink2 * ((progress - 0.35) / 0.65) * 0.6;
+            const s2 = 2.5 + progress * 3;
+            ctx.globalAlpha = s2a;
+            ctx.beginPath();
+            ctx.moveTo(tsubaX, tsubaY - s2);
+            ctx.lineTo(tsubaX + s2 * 0.2, tsubaY - s2 * 0.2);
+            ctx.lineTo(tsubaX + s2, tsubaY);
+            ctx.lineTo(tsubaX + s2 * 0.2, tsubaY + s2 * 0.2);
+            ctx.lineTo(tsubaX, tsubaY + s2);
+            ctx.lineTo(tsubaX - s2 * 0.2, tsubaY + s2 * 0.2);
+            ctx.lineTo(tsubaX - s2, tsubaY);
+            ctx.lineTo(tsubaX - s2 * 0.2, tsubaY - s2 * 0.2);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        // Subtle aura glow around caster
+        ctx.globalAlpha = 0.06 + progress * 0.12;
+        ctx.fillStyle = '#aaddff';
+        ctx.shadowColor = '#aaddff';
+        ctx.shadowBlur = 20;
+        ctx.beginPath();
+        ctx.arc(c.cx, c.cy, CONFIG.SPRITE * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.shadowBlur = 0;
+        ctx.restore();
+    }
+
+    // --- Elemental Kanji Telegraph (Enchants) ---
+    _drawKanjiWindup(ctx, w, progress) {
+        const wcx = w.castX;
+        const wcy = w.castY;
+        const castTopY = wcy - CONFIG.SPRITE / 2;
+        const spell = SPELL_DATA[w.comboKey];
+        const color = AFFINITY_COLORS[spell.affinity] || '#fff';
+        const kanjiMap = { fire: '\u706B', ice: '\u6C37', shock: '\u96F7' };
+        const kanji = kanjiMap[spell.affinity] || '\u8853';
+        const t = Date.now();
+        ctx.save();
+
+        // Kanji rising above caster
+        const scale = 0.4 + progress * 0.6;
+        const alpha = 0.2 + progress * 0.8;
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = color;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 22;
+        ctx.font = Math.floor(28 * scale) + 'px serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(kanji, wcx, castTopY - 8 - progress * 18);
+
+        // Orbiting element particles gathering inward
+        for (let i = 0; i < 6; i++) {
+            const angle = (i / 6) * Math.PI * 2 + t / 280;
+            const dist = 28 * (1 - progress * 0.55);
+            const px = wcx + Math.cos(angle) * dist;
+            const py = wcy + Math.sin(angle) * dist;
+            ctx.globalAlpha = 0.3 + progress * 0.4;
+            ctx.beginPath();
+            ctx.arc(px, py, 1.5 + progress * 2, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        ctx.shadowBlur = 0;
+        ctx.restore();
+    }
+
+    // --- Defensive Spell Telegraphs ---
+    _drawDefensiveWindup(ctx, w, progress) {
+        const wcx = w.castX;
+        const wcy = w.castY;
+        const t = Date.now();
+        ctx.save();
+
+        if (w.comboKey === 'ZCZ') {
+            // Shield forming — hexagonal outline expanding
+            const alpha = 0.15 + progress * 0.5;
+            ctx.globalAlpha = alpha;
+            ctx.strokeStyle = CONFIG.C.SHIELD;
+            ctx.shadowColor = CONFIG.C.SHIELD;
+            ctx.shadowBlur = 14;
+            ctx.lineWidth = 2;
+            const r = CONFIG.SPRITE * 0.35 + progress * CONFIG.SPRITE * 0.35;
+            ctx.beginPath();
+            for (let i = 0; i < 6; i++) {
+                const a = (i / 6) * Math.PI * 2 - Math.PI / 2;
+                const px = wcx + Math.cos(a) * r;
+                const py = wcy + Math.sin(a) * r;
+                if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            ctx.stroke();
+        } else if (w.comboKey === 'ZCX') {
+            // Mist gathering — swirling wisps converging
+            const alpha = 0.08 + progress * 0.25;
+            ctx.globalAlpha = alpha;
+            for (let i = 0; i < 8; i++) {
+                const a = (i / 8) * Math.PI * 2 + t / 400;
+                const dist = 22 + Math.sin(t / 180 + i) * 6;
+                ctx.fillStyle = '#aaaaff';
+                ctx.beginPath();
+                ctx.arc(wcx + Math.cos(a) * dist, wcy + Math.sin(a) * dist,
+                    3 + progress * 4, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        } else if (w.comboKey === 'ZCC') {
+            // Mirror shards orbiting
+            const alpha = 0.25 + progress * 0.5;
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = '#ffaaff';
+            ctx.shadowColor = '#ffaaff';
+            ctx.shadowBlur = 8;
+            for (let i = 0; i < 3; i++) {
+                const a = (i / 3) * Math.PI * 2 + t / 180;
+                const dist = 18 + progress * 6;
+                const px = wcx + Math.cos(a) * dist;
+                const py = wcy + Math.sin(a) * dist;
+                ctx.save();
+                ctx.translate(px, py);
+                ctx.rotate(a + t / 90);
+                ctx.fillRect(-2.5, -5, 5, 10);
+                ctx.restore();
+            }
+        }
+
+        ctx.shadowBlur = 0;
+        ctx.restore();
+    }
+
+    // --- Lane Effect Telegraph ---
+    _drawLaneWindup(ctx, w, progress) {
+        const c = w.caster;
+        const spell = SPELL_DATA[w.comboKey];
+        const color = AFFINITY_COLORS[spell.affinity] || '#fff';
+        const isPlayer = c.owner === 'player';
+        const isBurn = w.comboKey === 'XXX';
+        const t = Date.now();
+
+        const laneY = CONFIG.FIELD_TOP + w.castLane * CONFIG.LANE_HEIGHT;
+        const laneH = CONFIG.LANE_HEIGHT;
+        const laneMidY = laneY + laneH / 2;
+        let x, width;
+        if (isPlayer) {
+            x = CONFIG.MIDPOINT;
+            width = CONFIG.FIELD_RIGHT - CONFIG.MIDPOINT;
+        } else {
+            x = CONFIG.FIELD_LEFT;
+            width = CONFIG.MIDPOINT - CONFIG.FIELD_LEFT;
+        }
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(x, laneY, width, laneH);
+        ctx.clip();
+
+        // Pulsing lane overlay
+        const pulse = Math.sin(t / 70) * 0.5 + 0.5;
+        const alpha = (0.04 + progress * 0.14) * (0.7 + pulse * 0.3);
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = color;
+        ctx.fillRect(x, laneY, width, laneH);
+
+        // Warning border dashes scrolling
+        ctx.globalAlpha = 0.25 + progress * 0.45;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([14, 8]);
+        ctx.lineDashOffset = -(t / 18) % 22;
+        ctx.strokeRect(x + 2, laneY + 2, width - 4, laneH - 4);
+        ctx.setLineDash([]);
+
+        // Sweeping wave from caster side across the lane
+        const waveX = x + width * progress;
+        const waveW = 20 + progress * 30;
+        const waveGrad = ctx.createLinearGradient(waveX - waveW, 0, waveX + waveW, 0);
+        waveGrad.addColorStop(0, 'transparent');
+        waveGrad.addColorStop(0.5, color);
+        waveGrad.addColorStop(1, 'transparent');
+        ctx.globalAlpha = 0.2 + progress * 0.35;
+        ctx.fillStyle = waveGrad;
+        ctx.fillRect(waveX - waveW, laneY, waveW * 2, laneH);
+
+        // Element-specific flair
+        if (isBurn) {
+            // Rising heat columns along the lane
+            ctx.globalAlpha = 0.15 + progress * 0.35;
+            for (let i = 0; i < 8; i++) {
+                const fx = x + (i / 8) * width + ((t / 12 + i * 37) % (width / 8));
+                const flicker = Math.sin(t / 60 + i * 1.7) * 6;
+                const fh = (12 + progress * 22) * (0.6 + Math.sin(t / 80 + i * 2.3) * 0.4);
+                const fGrad = ctx.createLinearGradient(0, laneMidY + 10, 0, laneMidY + 10 - fh);
+                fGrad.addColorStop(0, '#ff4400');
+                fGrad.addColorStop(0.4, color);
+                fGrad.addColorStop(1, '#ffcc00');
+                ctx.fillStyle = fGrad;
+                ctx.beginPath();
+                ctx.moveTo(fx - 3 + flicker * 0.3, laneMidY + 10);
+                ctx.quadraticCurveTo(fx + flicker * 0.5, laneMidY + 10 - fh * 0.6, fx + 1, laneMidY + 10 - fh);
+                ctx.quadraticCurveTo(fx - flicker * 0.3, laneMidY + 10 - fh * 0.4, fx + 4 - flicker * 0.2, laneMidY + 10);
+                ctx.fill();
+            }
+            // Ember sparkles
+            ctx.fillStyle = '#ffcc44';
+            ctx.shadowColor = '#ff8800';
+            ctx.shadowBlur = 6;
+            for (let i = 0; i < 6; i++) {
+                const ex = x + ((t / 8 + i * 73) % width);
+                const ey = laneY + 8 + ((t / 14 + i * 41) % (laneH - 16));
+                const ea = 0.3 + Math.sin(t / 90 + i) * 0.3;
+                ctx.globalAlpha = ea * progress;
+                ctx.beginPath();
+                ctx.arc(ex, ey, 1.5 + Math.sin(t / 70 + i) * 0.8, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        } else {
+            // Frost: creeping ice crystals and mist
+            ctx.globalAlpha = 0.1 + progress * 0.3;
+            for (let i = 0; i < 10; i++) {
+                const cx = x + ((i / 10) * width + (t / 30 + i * 47) % 40);
+                const cy = laneY + 6 + ((i * 31 + 7) % (laneH - 12));
+                const cSize = 3 + progress * 5 + Math.sin(t / 100 + i) * 2;
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 1;
+                // Crystal: 6-point star shape
+                for (let j = 0; j < 3; j++) {
+                    const ca = j * Math.PI / 3 + t / 800;
+                    ctx.beginPath();
+                    ctx.moveTo(cx + Math.cos(ca) * cSize, cy + Math.sin(ca) * cSize);
+                    ctx.lineTo(cx - Math.cos(ca) * cSize, cy - Math.sin(ca) * cSize);
+                    ctx.stroke();
+                }
+            }
+            // Cold mist layer at bottom
+            const mistGrad = ctx.createLinearGradient(0, laneY + laneH, 0, laneY + laneH - 20);
+            mistGrad.addColorStop(0, color);
+            mistGrad.addColorStop(1, 'transparent');
+            ctx.globalAlpha = 0.08 + progress * 0.15;
+            ctx.fillStyle = mistGrad;
+            ctx.fillRect(x, laneY + laneH - 20, width, 20);
+        }
+
+        // Kanji in center of the affected zone
+        if (progress > 0.3) {
+            const kanjiLabel = isBurn ? '\u706B' : '\u6C37';
+            const ka = (progress - 0.3) / 0.7;
+            ctx.globalAlpha = ka * 0.4;
+            ctx.fillStyle = color;
+            ctx.shadowColor = color;
+            ctx.shadowBlur = 16;
+            ctx.font = Math.floor(20 + progress * 10) + 'px serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(kanjiLabel, x + width / 2, laneMidY + 7);
+        }
+
+        ctx.shadowBlur = 0;
+        ctx.restore();
+
+        // Elemental kanji in front of caster
+        this._drawCasterKanji(ctx, w, progress);
+    }
+
+    // --- AOE / Ultimate Field-Wide Telegraph ---
+    _drawAOEWindup(ctx, w, progress) {
+        const spell = SPELL_DATA[w.comboKey];
+        const color = AFFINITY_COLORS[spell.affinity] || '#fff';
+        const t = Date.now();
+
+        ctx.save();
+
+        // Full field color pulse
+        const pulse = Math.sin(t / 55) * 0.5 + 0.5;
+        const alpha = (0.02 + progress * 0.1) * (0.6 + pulse * 0.4);
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = color;
+        ctx.fillRect(CONFIG.FIELD_LEFT, CONFIG.FIELD_TOP, CONFIG.FIELD_WIDTH, CONFIG.FIELD_HEIGHT);
+
+        // Thickening border
+        ctx.globalAlpha = 0.25 + progress * 0.55;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2 + progress * 4;
+        ctx.strokeRect(CONFIG.FIELD_LEFT, CONFIG.FIELD_TOP, CONFIG.FIELD_WIDTH, CONFIG.FIELD_HEIGHT);
+
+        // Energy orbs converging toward field center
+        const fcx = CONFIG.FIELD_LEFT + CONFIG.FIELD_WIDTH / 2;
+        const fcy = CONFIG.FIELD_TOP + CONFIG.FIELD_HEIGHT / 2;
+        ctx.fillStyle = color;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 12;
+        const ratio = CONFIG.FIELD_HEIGHT / CONFIG.FIELD_WIDTH;
+        for (let i = 0; i < 12; i++) {
+            const angle = (i / 12) * Math.PI * 2 + t / 350;
+            const maxD = CONFIG.FIELD_WIDTH * 0.48;
+            const dist = maxD * (1 - progress * 0.65);
+            const px = fcx + Math.cos(angle) * dist;
+            const py = fcy + Math.sin(angle) * dist * ratio;
+            ctx.globalAlpha = 0.25 + progress * 0.5;
+            ctx.beginPath();
+            ctx.arc(px, py, 2 + progress * 3, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // Elemental kanji at center
+        if (progress > 0.35) {
+            const kanjiMap = { fire: '\u968E\u77F3', ice: '\u6C37\u6CB3', shock: '\u96F7\u795E' };
+            const kanji = kanjiMap[spell.affinity] || '\u8853';
+            const ka = (progress - 0.35) / 0.65;
+            ctx.globalAlpha = ka * 0.55;
+            ctx.fillStyle = color;
+            ctx.font = Math.floor(24 + progress * 14) + 'px serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(kanji, fcx, fcy + 10);
+        }
+
+        ctx.shadowBlur = 0;
+        ctx.restore();
+
+        // Elemental kanji in front of caster
+        this._drawCasterKanji(ctx, w, progress);
+    }
+
+    // --- Summon Telegraph (summoning circle) ---
+    _drawSummonWindup(ctx, w, progress) {
+        const c = w.caster;
+        const isPlayer = c.owner === 'player';
+        const sx = isPlayer ? w.castX + CONFIG.SPRITE / 2 + 40 : w.castX - CONFIG.SPRITE / 2 - 40;
+        const sy = w.castY;
+        const t = Date.now();
+
+        ctx.save();
+        const alpha = 0.15 + progress * 0.5;
+        ctx.globalAlpha = alpha;
+        ctx.strokeStyle = '#ffcc88';
+        ctx.shadowColor = '#ffcc88';
+        ctx.shadowBlur = 10;
+        ctx.lineWidth = 1.5;
+
+        // Outer circle
+        const r = 14 + progress * 10;
+        ctx.beginPath();
+        ctx.arc(sx, sy, r, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Inner rotating arc
+        ctx.beginPath();
+        ctx.arc(sx, sy, r * 0.55, t / 180, t / 180 + Math.PI * 1.5);
+        ctx.stroke();
+
+        // Seal marks
+        ctx.fillStyle = '#ffcc88';
+        for (let i = 0; i < 4; i++) {
+            const a = (i / 4) * Math.PI * 2 + t / 260;
+            ctx.fillRect(sx + Math.cos(a) * r * 0.75 - 2, sy + Math.sin(a) * r * 0.75 - 2, 4, 4);
+        }
+
+        ctx.shadowBlur = 0;
+        ctx.restore();
+
+        // Elemental kanji in front of caster (if elemental summon)
+        this._drawCasterKanji(ctx, w, progress);
     }
 
     _applyEnchant(comboKey, caster, stats) {
@@ -230,15 +860,28 @@ class Combat {
             else if (died === 'regrow') this._onHydraRegrow(s);
         });
 
-        // Apply status based on type
+        // Apply status based on type (reduced by element resist)
+        if (stats.burnDmg && stats.burnDur) {
+            const dur = stats.burnDur * this._elementResist(target, 'fire');
+            target.burnTimer = dur;
+            target.burnDmg = stats.burnDmg;
+            target.burnTick = 500;
+            enemySummons.forEach(s => {
+                s.burnTimer = stats.burnDur;
+                s.burnDmg = stats.burnDmg;
+                s.burnTick = 500;
+            });
+        }
         if (stats.freezeDur) {
-            target.freezeTimer = Math.max(target.freezeTimer, stats.freezeDur);
+            const dur = stats.freezeDur * this._elementResist(target, 'ice');
+            target.freezeTimer = Math.max(target.freezeTimer, dur);
             enemySummons.forEach(s => { s.freezeTimer = Math.max(s.freezeTimer, stats.freezeDur); });
             if (isPlayer && this.stats) this.stats.recordStunFreeze();
             AudioEngine.playSfx('freeze');
         }
         if (stats.stunDur) {
-            target.stunTimer = Math.max(target.stunTimer, stats.stunDur);
+            const dur = stats.stunDur * this._elementResist(target, 'shock');
+            target.stunTimer = Math.max(target.stunTimer, dur);
             enemySummons.forEach(s => { s.stunTimer = Math.max(s.stunTimer, stats.stunDur); });
             if (isPlayer && this.stats) this.stats.recordStunFreeze();
             AudioEngine.playSfx('stun');
@@ -286,7 +929,19 @@ class Combat {
             dmg += attacker.enchant.bonusDmg;
         }
 
+        // Elemental resistance — enchant halves matching element damage
+        if (spell && target.enchant && spell.affinity !== 'none' && target.enchant.type === spell.affinity) {
+            dmg = Math.ceil(dmg * 0.5);
+            this.effects.statusText(target.cx, target.y - 20, 'RESIST', AFFINITY_COLORS[spell.affinity]);
+        }
+
         return Math.max(1, dmg);
+    }
+
+    // Check if a fighter resists an element via enchant, returns duration multiplier
+    _elementResist(target, affinity) {
+        if (target.enchant && affinity && target.enchant.type === affinity) return 0.5;
+        return 1;
     }
 
     _hasIncomingProjectile(lane) {
@@ -334,15 +989,18 @@ class Combat {
         if (!attacker.enchant) return;
         const e = attacker.enchant;
         if (e.burnDmg && e.burnDur) {
-            target.burnTimer = e.burnDur;
+            const dur = e.burnDur * this._elementResist(target, 'fire');
+            target.burnTimer = dur;
             target.burnDmg = e.burnDmg;
             target.burnTick = 500;
         }
         if (e.freezeDur) {
-            target.freezeTimer = Math.max(target.freezeTimer, e.freezeDur);
+            const dur = e.freezeDur * this._elementResist(target, 'ice');
+            target.freezeTimer = Math.max(target.freezeTimer, dur);
         }
         if (e.stunDur) {
-            target.stunTimer = Math.max(target.stunTimer, e.stunDur);
+            const dur = e.stunDur * this._elementResist(target, 'shock');
+            target.stunTimer = Math.max(target.stunTimer, dur);
         }
     }
 
@@ -389,6 +1047,10 @@ class Combat {
             this._spawnProjectileTrail(proj, dt);
             this._checkProjectileCollisions(proj);
         });
+
+        // Projectile-vs-projectile collisions
+        this._checkProjectileVsProjectile();
+
         // Clean dead projectiles and free spellOnScreen
         this.projectiles = this.projectiles.filter(proj => {
             if (!proj.alive) {
@@ -446,6 +1108,9 @@ class Combat {
             return true;
         });
 
+        // Update windups / telegraphs
+        this._updateWindups(dt);
+
         // Update effects
         this.effects.update(dt);
 
@@ -456,6 +1121,26 @@ class Combat {
         if (this._slashEffects) {
             this._slashEffects.forEach(s => { s.timer -= dt; });
             this._slashEffects = this._slashEffects.filter(s => s.timer > 0);
+        }
+
+        // Cut lines
+        if (this._cutLines) {
+            this._cutLines.forEach(c => { c.timer -= dt; });
+            this._cutLines = this._cutLines.filter(c => c.timer > 0);
+        }
+
+        // Kanji floaters
+        this._kanjiFloaters.forEach(f => {
+            f.timer -= dt;
+            f.x += f.driftX;
+            f.y += f.driftY;
+        });
+        this._kanjiFloaters = this._kanjiFloaters.filter(f => f.timer > 0);
+
+        // Clash effects
+        if (this._clashEffects) {
+            this._clashEffects.forEach(c => { c.timer -= dt; });
+            this._clashEffects = this._clashEffects.filter(c => c.timer > 0);
         }
 
         // Spell info timer
@@ -604,24 +1289,28 @@ class Combat {
             const caster = isPlayerProj ? this.player : this.enemy;
             this._applyEnchantEffects(target, caster);
 
-            // Apply projectile-specific effects
+            // Apply projectile-specific effects (reduced by element resist)
             if (proj.stats.burnDmg) {
-                target.burnTimer = proj.stats.burnDur || 1000;
+                const dur = (proj.stats.burnDur || 1000) * this._elementResist(target, 'fire');
+                target.burnTimer = dur;
                 target.burnDmg = proj.stats.burnDmg;
                 target.burnTick = 500;
             }
             if (proj.stats.freezeDur) {
-                target.freezeTimer = Math.max(target.freezeTimer, proj.stats.freezeDur);
+                const dur = proj.stats.freezeDur * this._elementResist(target, 'ice');
+                target.freezeTimer = Math.max(target.freezeTimer, dur);
                 if (isPlayerProj && this.stats) this.stats.recordStunFreeze();
                 AudioEngine.playSfx('freeze');
             }
             if (proj.stats.stunDur) {
-                target.stunTimer = Math.max(target.stunTimer, proj.stats.stunDur);
+                const dur = proj.stats.stunDur * this._elementResist(target, 'shock');
+                target.stunTimer = Math.max(target.stunTimer, dur);
                 if (isPlayerProj && this.stats) this.stats.recordStunFreeze();
                 AudioEngine.playSfx('stun');
             }
             if (proj.stats.poisonDmg) {
-                target.burnTimer = proj.stats.poisonDur || 3000;
+                const dur = (proj.stats.poisonDur || 3000) * this._elementResist(target, 'poison');
+                target.burnTimer = dur;
                 target.burnDmg = proj.stats.poisonDmg;
                 target.burnTick = 500;
                 this.effects.statusText(target.cx, target.y - 15, 'POISONED', CONFIG.C.POISON);
@@ -663,6 +1352,76 @@ class Combat {
         });
     }
 
+    _checkProjectileVsProjectile() {
+        const projs = this.projectiles;
+        for (let i = 0; i < projs.length; i++) {
+            const a = projs[i];
+            if (!a.alive || !a.charged || a.isStatic || a.isCloud) continue;
+            for (let j = i + 1; j < projs.length; j++) {
+                const b = projs[j];
+                if (!b.alive || !b.charged || b.isStatic || b.isCloud) continue;
+                if (a.owner === b.owner) continue; // same side, no collision
+                if (a.lane !== b.lane) continue;
+                const dist = Math.abs(a.cx - b.cx);
+                if (dist > CONFIG.SPRITE * 0.7) continue;
+
+                // Collision! Determine type
+                const aIsPlayer = a.owner === 'player';
+
+                // Summon-vs-summon projectiles don't interact
+                if (a.fromSummon && b.fromSummon) continue;
+
+                const playerProj = aIsPlayer ? a : b;
+                const enemyProj = aIsPlayer ? b : a;
+
+                // Only main-cast projectiles destroy summon projectiles
+                const enemyIsSummonProj = enemyProj.fromSummon;
+
+                const cx = (a.cx + b.cx) / 2;
+                const cy = (a.cy + b.cy) / 2;
+
+                if (enemyIsSummonProj) {
+                    // Player projectile destroys summon projectile
+                    enemyProj.alive = false;
+                    enemyProj.hitSomething = true;
+                    // Small burst at collision point
+                    this.effects.burst(cx, cy, '#ffaa44', 5, 3, 200, 3);
+                    this.effects.statusText(cx, cy - 15, 'BLOCKED', '#ffcc66');
+                    AudioEngine.playSfx('hit');
+                } else {
+                    // Two main projectiles cancel each other — fancy clash effect
+                    a.alive = false;
+                    b.alive = false;
+                    a.hitSomething = true;
+                    b.hitSomething = true;
+
+                    // Determine clash color from both affinities
+                    const spellA = SPELL_DATA[a.comboKey];
+                    const spellB = SPELL_DATA[b.comboKey];
+                    const colorA = spellA ? (AFFINITY_COLORS[spellA.affinity] || '#fff') : '#fff';
+                    const colorB = spellB ? (AFFINITY_COLORS[spellB.affinity] || '#fff') : '#fff';
+
+                    // Big clash burst
+                    this.effects.burst(cx, cy, colorA, 8, 5, 400, 5);
+                    this.effects.burst(cx, cy, colorB, 8, 5, 400, 5);
+                    this.effects.burst(cx, cy, '#ffffff', 6, 3, 300, 4);
+                    this.effects.shake(150, 4);
+
+                    // Clash flash ring
+                    this._clashEffects = this._clashEffects || [];
+                    this._clashEffects.push({
+                        x: cx, y: cy,
+                        colorA, colorB,
+                        timer: 400, maxTimer: 400,
+                    });
+
+                    this.effects.statusText(cx, cy - 20, 'CLASH!', '#ffffff');
+                    AudioEngine.playSfx('deflect');
+                }
+            }
+        }
+    }
+
     _summonAttack(summon) {
         const isPlayer = summon.owner === 'player';
         const target = isPlayer ? this.enemy : this.player;
@@ -693,6 +1452,7 @@ class Combat {
             const proj = new Projectile(px, summon.lane, summon.owner,
                 summon.comboKey, summon.level, projStats, summon.facing);
             proj.charged = true;
+            proj.fromSummon = true;
             this.projectiles.push(proj);
         }
     }
@@ -728,10 +1488,12 @@ class Combat {
                 : target.cx < CONFIG.MIDPOINT;
             if (inSide) {
                 if (le.type === 'burn' && le.stats.dmg) {
-                    target.takeDamage(le.stats.dmg, this.effects, null);
+                    const resist = this._elementResist(target, 'fire');
+                    target.takeDamage(Math.max(1, Math.ceil(le.stats.dmg * resist)), this.effects, null);
                 }
                 if (le.type === 'freeze' && le.stats.freezeDur) {
-                    target.freezeTimer = Math.max(target.freezeTimer, le.stats.freezeDur);
+                    const dur = le.stats.freezeDur * this._elementResist(target, 'ice');
+                    target.freezeTimer = Math.max(target.freezeTimer, dur);
                 }
             }
         }
@@ -810,6 +1572,23 @@ class Combat {
         // Projectiles
         this.projectiles.forEach(p => p.draw(ctx));
 
+        // Lingering kanji floaters (on top of entities)
+        this._kanjiFloaters.forEach(f => {
+            const life = f.timer / f.maxTimer;
+            const alpha = life < 0.4 ? life / 0.4 : 1;
+            ctx.save();
+            ctx.globalAlpha = alpha * 0.75;
+            ctx.fillStyle = f.color;
+            ctx.shadowColor = f.color;
+            ctx.shadowBlur = 14 * life;
+            ctx.font = Math.floor(34 + (1 - life) * 10) + 'px serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(f.kanji, f.x, f.y);
+            ctx.shadowBlur = 0;
+            ctx.restore();
+        });
+
         // Slash effects
         if (this._slashEffects) {
             this._slashEffects.forEach(s => {
@@ -818,9 +1597,98 @@ class Combat {
             });
         }
 
+        // Cut lines on hit targets
+        if (this._cutLines) {
+            this._cutLines.forEach(c => {
+                const p = 1 - c.timer / c.maxTimer;
+                const alpha = p < 0.15 ? p / 0.15 : Math.max(0, 1 - (p - 0.15) / 0.85);
+                const len = CONFIG.SPRITE * 0.7;
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.strokeStyle = '#ffffff';
+                ctx.shadowColor = '#aaddff';
+                ctx.shadowBlur = 10;
+                ctx.lineWidth = 2.5 - p * 1.5;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.moveTo(c.x - len, c.y - len);
+                ctx.lineTo(c.x + len, c.y + len);
+                ctx.stroke();
+                // Thinner bright inner line
+                ctx.globalAlpha = alpha * 0.7;
+                ctx.strokeStyle = '#aaddff';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(c.x - len * 0.8, c.y - len * 0.8);
+                ctx.lineTo(c.x + len * 0.8, c.y + len * 0.8);
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+                ctx.restore();
+            });
+        }
+
         // Fighters
         this.player.drawLane(ctx);
         this.enemy.drawLane(ctx);
+
+        // Bow charge (on top of player)
+        this.projectiles.forEach(p => p.drawBowCharge(ctx));
+
+        // Windup telegraphs (on top of entities)
+        this._drawWindups(ctx);
+
+        // Clash effects (expanding ring + cross spark)
+        if (this._clashEffects) {
+            this._clashEffects.forEach(c => {
+                const p = 1 - c.timer / c.maxTimer;
+                const alpha = p < 0.1 ? p / 0.1 : Math.max(0, 1 - (p - 0.1) / 0.9);
+                const r = 8 + p * 40;
+                ctx.save();
+
+                // Outer ring — color A
+                ctx.globalAlpha = alpha * 0.7;
+                ctx.strokeStyle = c.colorA;
+                ctx.shadowColor = c.colorA;
+                ctx.shadowBlur = 15;
+                ctx.lineWidth = 3 - p * 2;
+                ctx.beginPath();
+                ctx.arc(c.x, c.y, r, 0, Math.PI);
+                ctx.stroke();
+
+                // Outer ring — color B
+                ctx.strokeStyle = c.colorB;
+                ctx.shadowColor = c.colorB;
+                ctx.beginPath();
+                ctx.arc(c.x, c.y, r, Math.PI, Math.PI * 2);
+                ctx.stroke();
+
+                // Inner white flash
+                ctx.globalAlpha = alpha * 0.9;
+                ctx.fillStyle = '#ffffff';
+                ctx.shadowColor = '#ffffff';
+                ctx.shadowBlur = 20;
+                ctx.beginPath();
+                ctx.arc(c.x, c.y, Math.max(1, 6 * (1 - p)), 0, Math.PI * 2);
+                ctx.fill();
+
+                // Cross spark lines
+                const sparkLen = 12 + p * 20;
+                ctx.globalAlpha = alpha * 0.6;
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 1.5 - p;
+                ctx.shadowBlur = 8;
+                for (let i = 0; i < 4; i++) {
+                    const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+                    ctx.beginPath();
+                    ctx.moveTo(c.x, c.y);
+                    ctx.lineTo(c.x + Math.cos(a) * sparkLen, c.y + Math.sin(a) * sparkLen);
+                    ctx.stroke();
+                }
+
+                ctx.shadowBlur = 0;
+                ctx.restore();
+            });
+        }
 
         // Effects (particles, flashes, text)
         this.effects.draw(ctx);
@@ -885,6 +1753,49 @@ class Combat {
         UI.drawTopBar(ctx, this.enemyData);
 
         ctx.restore();
+
+        // Pause menu overlay (drawn outside shake transform)
+        if (this.paused) {
+            ctx.save();
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            ctx.fillRect(0, 0, CONFIG.WIDTH, CONFIG.HEIGHT);
+
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '800 36px ' + CONFIG.FONT;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('PAUSED', CONFIG.WIDTH / 2, CONFIG.HEIGHT / 2 - 70);
+
+            const opts = ['Continue', 'Quit'];
+            opts.forEach((opt, i) => {
+                const y = CONFIG.HEIGHT / 2 + i * 52;
+                const sel = i === this.pauseSelected;
+                // Selection box
+                if (sel) {
+                    ctx.fillStyle = 'rgba(233,69,96,0.15)';
+                    ctx.strokeStyle = CONFIG.C.ACCENT;
+                    ctx.lineWidth = 2;
+                    const bx = CONFIG.WIDTH / 2 - 110, by = y - 20, bw = 220, bh = 40, br = 8;
+                    ctx.beginPath();
+                    ctx.moveTo(bx + br, by);
+                    ctx.arcTo(bx + bw, by, bx + bw, by + bh, br);
+                    ctx.arcTo(bx + bw, by + bh, bx, by + bh, br);
+                    ctx.arcTo(bx, by + bh, bx, by, br);
+                    ctx.arcTo(bx, by, bx + bw, by, br);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.stroke();
+                }
+                ctx.fillStyle = sel ? '#ffffff' : '#667788';
+                ctx.font = (sel ? '700' : '400') + ' 22px ' + CONFIG.FONT;
+                ctx.fillText(opt, CONFIG.WIDTH / 2, y);
+            });
+
+            ctx.fillStyle = '#556677';
+            ctx.font = '400 14px ' + CONFIG.FONT;
+            ctx.fillText('Press ESC to resume', CONFIG.WIDTH / 2, CONFIG.HEIGHT / 2 + 140);
+            ctx.restore();
+        }
     }
 
     // ===== BATTLEFIELD SCENERY =====
@@ -1262,6 +2173,7 @@ class Combat {
             earth:  { laneTint: 'rgba(170,120,60,0.06)', bgGrad: ['#1a1408','#201a10'], particle: '#bb8844', particle2: '#665533', ambient: 'dust', midline: '#554433' },
             shadow: { laneTint: 'rgba(155,89,182,0.06)', bgGrad: ['#100a18','#18102a'], particle: '#aa66dd', particle2: '#6622aa', ambient: 'wisp', midline: '#332244' },
             water:  { laneTint: 'rgba(52,152,219,0.06)', bgGrad: ['#0a1020','#101828'], particle: '#55aaee', particle2: '#aaddff', ambient: 'bubble', midline: '#223355' },
+            avatar: { laneTint: 'rgba(255,255,255,0.04)', bgGrad: ['#0a0a14','#181828'], particle: '#ffffff', particle2: '#ffcc44', ambient: 'wisp', midline: '#444455' },
         };
         return themes[affinity] || { laneTint: 'rgba(255,255,255,0.02)', bgGrad: [CONFIG.C.BG, CONFIG.C.BG], particle: '#555', particle2: '#333', ambient: 'dust', midline: CONFIG.C.MIDLINE };
     }

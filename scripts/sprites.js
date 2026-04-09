@@ -128,13 +128,25 @@ const Sprites = {
         this.roundRect(ctx, -9, -hs + 11, 8, 7, 2, '#ffffff');
         this.roundRect(ctx, 2, -hs + 11, 8, 7, 2, '#ffffff');
         // Pupils
-        ctx.fillStyle = '#111111';
-        ctx.fillRect(-6, -hs + 13, 4, 4);
-        ctx.fillRect(5, -hs + 13, 4, 4);
-        // Eye shine
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(-5, -hs + 13, 2, 2);
-        ctx.fillRect(6, -hs + 13, 2, 2);
+        if (options.eyesClosed) {
+            // Closed eyes — horizontal lines
+            ctx.strokeStyle = '#111111';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(-7, -hs + 14); ctx.lineTo(-2, -hs + 14);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(4, -hs + 14); ctx.lineTo(9, -hs + 14);
+            ctx.stroke();
+        } else {
+            ctx.fillStyle = '#111111';
+            ctx.fillRect(-6, -hs + 13, 4, 4);
+            ctx.fillRect(5, -hs + 13, 4, 4);
+            // Eye shine
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(-5, -hs + 13, 2, 2);
+            ctx.fillRect(6, -hs + 13, 2, 2);
+        }
 
         // ----- Expression (brows + mouth) -----
         const face = options.face || 'smile';
@@ -1114,21 +1126,51 @@ const Sprites = {
     // ===== EFFECTS =====
     swordSlash(ctx, x, y, w, h, progress, facing) {
         ctx.save();
-        ctx.globalAlpha = 1 - progress;
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 3;
         ctx.translate(x, y);
         if (facing === 'left') ctx.scale(-1, 1);
-        ctx.beginPath();
-        ctx.moveTo(0, -h / 2);
-        ctx.quadraticCurveTo(w * progress, 0, 0, h / 2);
-        ctx.stroke();
+
+        const alpha = 1 - progress * progress;
+        const arcRadius = h * 0.5;
+        const sweepAngle = Math.PI * 0.85;
+        const startAngle = -sweepAngle / 2 - 0.15 + progress * 0.3;
+        const endAngle = startAngle + sweepAngle;
+        const arcX = w - arcRadius;
+
+        // Outer emphasis lines — top and bottom edges of the slash
+        ctx.lineCap = 'round';
+        const spread = h * 0.35;
+        ctx.globalAlpha = alpha * 0.18;
         ctx.strokeStyle = '#aaddff';
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(5, -h / 2 + 5);
-        ctx.quadraticCurveTo(w * progress - 5, 0, 5, h / 2 - 5);
+        ctx.moveTo(4, 0);
+        ctx.lineTo(arcX, -spread);
         ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(4, 0);
+        ctx.lineTo(arcX, spread);
+        ctx.stroke();
+
+        // Outer bright slash arc
+        ctx.globalAlpha = alpha * 0.9;
+        ctx.strokeStyle = '#ffffff';
+        ctx.shadowColor = '#aaddff';
+        ctx.shadowBlur = 8;
+        ctx.lineWidth = 3 - progress * 2;
+        ctx.beginPath();
+        ctx.arc(arcX, 0, arcRadius, startAngle, endAngle);
+        ctx.stroke();
+
+        // Inner thinner blue arc
+        ctx.globalAlpha = alpha * 0.6;
+        ctx.strokeStyle = '#aaddff';
+        ctx.shadowBlur = 4;
+        ctx.lineWidth = 1.5 - progress * 0.8;
+        ctx.beginPath();
+        ctx.arc(arcX, 0, arcRadius * 0.7, startAngle + 0.1, endAngle - 0.1);
+        ctx.stroke();
+
+        ctx.shadowBlur = 0;
         ctx.restore();
     },
 

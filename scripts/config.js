@@ -84,6 +84,7 @@ const PLAYER_SKINS = [
     { id: 'wind',    name: 'Wind Kunoichi',  color: '#88dd88', accent: '#bbffbb', detail: 'flower',    female: true,  face: 'cheerful',unlockEnemy: 'kaze' },
     { id: 'storm',   name: 'Storm Ninja',    color: '#2244cc', accent: '#ffdd00', detail: 'lightning', female: false, face: 'fierce',  unlockEnemy: 'raiden' },
     { id: 'dragon',  name: 'Dragon Ninja',   color: '#cc1111', accent: '#ff4444', detail: 'katana',    female: false, face: 'angry',   unlockEnemy: 'ryujin' },
+    { id: 'avatar',  name: 'Avatar Ninja',   color: '#ffffff', accent: '#ffcc44', detail: 'katana',    female: false, face: 'calm',    unlockEnemy: 'tensei' },
 ];
 const ENEMIES = [
     {
@@ -141,6 +142,13 @@ const ENEMIES = [
         spells: ['ZZX','ZXZ','ZXC','XZZ','XXX','XCZ','XCC','CXZ','CXX','CXC','CCC'],
         color: '#ff4444', aiSpeed: 1.0, castRate: 1500,
         desc: 'The ultimate test. Fire, thunder, and an army of summons.',
+    },
+    {
+        id: 'tensei',
+        name: 'Tensei', title: 'The Avatar', affinity: 'avatar',
+        spells: ['ZZX','ZZC','ZCZ','ZCX','ZCC','XZZ','XZX','XXX','XXZ','XCZ','XCX','XCC','CZX','CXZ','CXC'],
+        color: '#ffffff', aiSpeed: 1.0, castRate: 1400,
+        desc: 'Master of all elements. Fire, ice, thunder — nothing is beyond reach.',
     },
 ];
 

@@ -15,8 +15,8 @@ const SPELL_DATA = {
     'ZZX': {
         name: 'Sword Slash', type: 'instant', category: 'attack', affinity: 'none',
         icon: 'sword',
-        desc: 'Instant blade reaching most of the field.',
-        stats: { dmg: 7, range: 0.75, cd: 500 },
+        desc: 'Instant blade reaching half the field.',
+        stats: { dmg: 7, range: 0.25, cd: 500 },
     },
     'ZZC': {
         name: 'Bow Shot', type: 'projectile', category: 'attack', affinity: 'none',
@@ -27,19 +27,19 @@ const SPELL_DATA = {
     'ZXZ': {
         name: 'Ember Enchant', type: 'enchant', category: 'buff', affinity: 'fire',
         icon: 'enchant_fire',
-        desc: 'Coats weapons in fire. Adds burn on hit.',
+        desc: 'Coats weapons in fire. Adds burn on hit & resists fire.',
         stats: { duration: 8000, bonusDmg: 3, burnDmg: 1, burnDur: 2000, cd: 3500 },
     },
     'ZXX': {
         name: 'Frost Enchant', type: 'enchant', category: 'buff', affinity: 'ice',
         icon: 'enchant_ice',
-        desc: 'Coats weapons in ice. Freezes on hit.',
+        desc: 'Coats weapons in ice. Freezes on hit & resists ice.',
         stats: { duration: 8000, bonusDmg: 3, freezeDur: 800, cd: 3500 },
     },
     'ZXC': {
         name: 'Volt Enchant', type: 'enchant', category: 'buff', affinity: 'shock',
         icon: 'enchant_shock',
-        desc: 'Coats weapons in lightning. Stuns on hit.',
+        desc: 'Coats weapons in lightning. Stuns on hit & resists shock.',
         stats: { duration: 8000, bonusDmg: 3, stunDur: 600, cd: 3500 },
     },
     'ZCZ': {

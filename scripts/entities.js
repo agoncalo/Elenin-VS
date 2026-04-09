@@ -164,6 +164,7 @@ class Fighter extends Entity {
             invisible: this.invisible,
             enchant: this.enchant ? this.enchant.type : null,
             skin: this.skin || null,
+            eyesClosed: this._eyesClosed || false,
         };
 
         if (this.hitFlash > 0 && Math.floor(this.hitFlash / 40) % 2 === 0) {
@@ -214,6 +215,7 @@ class Projectile extends Entity {
 
         // Charge delay
         this.chargeTime = stats.chargeTime || 0;
+        this.maxChargeTime = this.chargeTime;
         this.charged = this.chargeTime <= 0;
     }
 
@@ -240,9 +242,96 @@ class Projectile extends Entity {
         }
     }
 
+    drawBowCharge(ctx) {
+        if (this.comboKey !== 'ZZC' || this.charged || this.maxChargeTime <= 0) return;
+        const progress = 1 - this.chargeTime / this.maxChargeTime;
+        const dir = this.dirX;
+        const bx = this.cx;
+        const by = this.cy;
+        ctx.save();
+
+        // Bow arc — tall longbow
+        const bowH = 30;
+        ctx.globalAlpha = 0.6 + progress * 0.4;
+        ctx.strokeStyle = '#aa7744';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(bx + dir * 4, by, bowH, -Math.PI * 0.45, Math.PI * 0.45);
+        ctx.stroke();
+        // Limb tips
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = '#997744';
+        const tipLen = 4;
+        for (const sign of [-1, 1]) {
+            const tipAngle = sign * Math.PI * 0.45;
+            const tx = bx + dir * 4 + Math.cos(tipAngle) * bowH;
+            const ty = by + Math.sin(tipAngle) * bowH;
+            ctx.beginPath();
+            ctx.moveTo(tx, ty);
+            ctx.lineTo(tx + dir * tipLen, ty + sign * tipLen);
+            ctx.stroke();
+        }
+
+        // Bowstring — pulls back with progress
+        const stringPull = progress * 14;
+        ctx.strokeStyle = '#ccccaa';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(bx + dir * 4 + Math.cos(-Math.PI * 0.45) * bowH, by + Math.sin(-Math.PI * 0.45) * bowH);
+        ctx.lineTo(bx - dir * stringPull, by);
+        ctx.lineTo(bx + dir * 4 + Math.cos(Math.PI * 0.45) * bowH, by + Math.sin(Math.PI * 0.45) * bowH);
+        ctx.stroke();
+
+        // Arrow on string — longer shaft
+        const arrowLen = 20;
+        const ax = bx - dir * stringPull;
+        ctx.strokeStyle = '#ddddcc';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(ax, by);
+        ctx.lineTo(ax + dir * arrowLen, by);
+        ctx.stroke();
+        // Fletching
+        ctx.strokeStyle = '#aaaaaa';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(ax + dir * 2, by - 3);
+        ctx.lineTo(ax, by);
+        ctx.lineTo(ax + dir * 2, by + 3);
+        ctx.stroke();
+        // Arrowhead
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.moveTo(ax + dir * arrowLen, by);
+        ctx.lineTo(ax + dir * (arrowLen - 5), by - 3.5);
+        ctx.lineTo(ax + dir * (arrowLen - 5), by + 3.5);
+        ctx.closePath();
+        ctx.fill();
+
+        // Tension glow at full draw
+        if (progress > 0.7) {
+            const glow = (progress - 0.7) / 0.3;
+            ctx.globalAlpha = glow * 0.4;
+            ctx.fillStyle = '#ffffff';
+            ctx.shadowColor = '#ffffff';
+            ctx.shadowBlur = 10;
+            ctx.beginPath();
+            ctx.arc(ax + dir * arrowLen, by, 3 + glow * 3, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        ctx.shadowBlur = 0;
+        ctx.restore();
+    }
+
     draw(ctx) {
         if (!this.charged) {
-            // Charging indicator — swirling energy gather
+            if (this.comboKey === 'ZZC' && this.maxChargeTime > 0) {
+                // Bow draw rendered on top layer via combat.js
+                return;
+            }
+
+            // Generic charging indicator — swirling energy gather
             const t = this.age;
             ctx.save();
             for (let i = 0; i < 4; i++) {
@@ -433,6 +522,55 @@ class Summon extends Entity {
         }
         if (this.freezeTimer > 0) {
             ctx.globalAlpha = 0.7;
+        }
+
+        // Healing aura (green glow clipped to lane) for healer summons
+        if (this.healAmt > 0) {
+            const acx = this.x + size / 2;
+            const acy = drawY + size / 2;
+            const healRadius = 200;
+            const ht = Date.now();
+            const hpulse = 0.5 + Math.sin(ht / 600) * 0.15;
+
+            // Clip to the summon's lane bounds
+            const laneY = CONFIG.FIELD_TOP + this.lane * CONFIG.LANE_HEIGHT;
+            const laneH = CONFIG.LANE_HEIGHT;
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(CONFIG.FIELD_LEFT, laneY, CONFIG.FIELD_WIDTH, laneH);
+            ctx.clip();
+
+            // Subtle green fill
+            ctx.globalAlpha = 0.04 + hpulse * 0.025;
+            ctx.fillStyle = CONFIG.C.HEAL;
+            ctx.beginPath();
+            ctx.arc(acx, acy, healRadius, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Green ring
+            ctx.globalAlpha = 0.12 + hpulse * 0.1;
+            ctx.strokeStyle = CONFIG.C.HEAL;
+            ctx.shadowColor = CONFIG.C.HEAL;
+            ctx.shadowBlur = 10;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(acx, acy, healRadius, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Small orbiting heal sparkles
+            ctx.fillStyle = CONFIG.C.HEAL;
+            ctx.shadowBlur = 6;
+            for (let i = 0; i < 5; i++) {
+                const ha = (i / 5) * Math.PI * 2 + ht / 1200;
+                const hd = healRadius * (0.6 + Math.sin(ht / 800 + i) * 0.2);
+                ctx.globalAlpha = 0.2 + hpulse * 0.2;
+                ctx.beginPath();
+                ctx.arc(acx + Math.cos(ha) * hd, acy + Math.sin(ha) * hd, 2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            ctx.shadowBlur = 0;
+            ctx.restore();
         }
 
         Sprites.summon(ctx, this.x, drawY, size,
