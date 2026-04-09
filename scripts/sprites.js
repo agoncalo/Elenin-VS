@@ -44,8 +44,8 @@ const Sprites = {
         ctx.fillStyle = shadeColor(bodyColor, 20);
         ctx.fill(); ctx.stroke();
 
-        // Kasa hat (wide conical farmer hat) — drawn on top of head
-        if (skin) {
+        // Kasa hat (wide conical farmer hat) — drawn on top of head (males only)
+        if (skin && !isFemale) {
             ctx.fillStyle = accentColor;
             ctx.beginPath();
             ctx.moveTo(-24, -hs + 6);
@@ -278,9 +278,9 @@ const Sprites = {
         // ----- Skin-specific back detail (weapon/accessory) -----
         if (skin) {
             const detail = skin.detail;
-            // Flower on hat (bubble, crystal, wind)
+            // Flower — on hat for males, on ponytail for females
             if (detail === 'flower') {
-                const fx = 6, fy = -hs - 4;
+                const fx = isFemale ? 14 : 6, fy = isFemale ? -hs + 4 : -hs - 4;
                 ctx.fillStyle = accentColor;
                 for (let i = 0; i < 5; i++) {
                     const a = (i / 5) * Math.PI * 2 - Math.PI / 2;
@@ -1243,6 +1243,91 @@ const Sprites = {
             ctx.lineWidth = 2;
             ctx.stroke();
         }
+    },
+
+    // Mini icon for spell tree slot machine (12-16px symbols)
+    miniIcon(ctx, x, y, s, type, color) {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.fillStyle = color;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.lineCap = 'round';
+        const h = s / 2;
+        switch (type) {
+            case 'sword': // crossed swords — Arms
+                ctx.beginPath(); ctx.moveTo(-h, h); ctx.lineTo(h, -h); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(h, h); ctx.lineTo(-h, -h); ctx.stroke();
+                ctx.fillRect(-1, -1, 2, 2);
+                break;
+            case 'magic': // sparkle star — Magic
+                for (let i = 0; i < 4; i++) {
+                    const a = i * Math.PI / 2;
+                    ctx.beginPath(); ctx.moveTo(0, 0);
+                    ctx.lineTo(Math.cos(a) * h, Math.sin(a) * h); ctx.stroke();
+                }
+                ctx.beginPath(); ctx.arc(0, 0, 2, 0, Math.PI * 2); ctx.fill();
+                break;
+            case 'summon': // small figure — Summon
+                ctx.beginPath(); ctx.arc(0, -h + 2, 3, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.moveTo(0, -h + 5); ctx.lineTo(0, 2); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(-h + 1, 0); ctx.lineTo(h - 1, 0); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(0, 2); ctx.lineTo(-3, h); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(0, 2); ctx.lineTo(3, h); ctx.stroke();
+                break;
+            case 'ranged': // arrow pointing right — Ranged
+                ctx.beginPath(); ctx.moveTo(-h, 0); ctx.lineTo(h, 0); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(h - 3, -3); ctx.lineTo(h, 0); ctx.lineTo(h - 3, 3); ctx.stroke();
+                break;
+            case 'enchant': // flame aura — Enchant
+                ctx.beginPath();
+                ctx.moveTo(0, -h); ctx.quadraticCurveTo(h, -2, 1, h);
+                ctx.quadraticCurveTo(0, 2, -1, h);
+                ctx.quadraticCurveTo(-h, -2, 0, -h);
+                ctx.fill();
+                break;
+            case 'defend': // shield shape — Defend
+                ctx.beginPath();
+                ctx.moveTo(0, -h); ctx.lineTo(h, -h + 3);
+                ctx.lineTo(h, 1); ctx.lineTo(0, h);
+                ctx.lineTo(-h, 1); ctx.lineTo(-h, -h + 3);
+                ctx.closePath(); ctx.stroke();
+                break;
+            case 'projectile': // fireball circle — Projectile
+                ctx.beginPath(); ctx.arc(0, 0, h - 1, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = 'rgba(255,255,255,0.4)';
+                ctx.beginPath(); ctx.arc(-1, -1, h / 2, 0, Math.PI * 2); ctx.fill();
+                break;
+            case 'lane': // horizontal dashes — Lane
+                ctx.beginPath(); ctx.moveTo(-h, -2); ctx.lineTo(h, -2); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(-h, 2); ctx.lineTo(h, 2); ctx.stroke();
+                ctx.fillRect(-h, -1, s, 1);
+                break;
+            case 'ultimate': // explosion burst — Ultimate
+                for (let i = 0; i < 6; i++) {
+                    const a = i * Math.PI / 3;
+                    ctx.beginPath(); ctx.moveTo(0, 0);
+                    ctx.lineTo(Math.cos(a) * h, Math.sin(a) * h); ctx.stroke();
+                }
+                break;
+            case 'support': // heart/cross — Support
+                ctx.fillRect(-1, -h + 1, 2, s - 2);
+                ctx.fillRect(-h + 1, -1, s - 2, 2);
+                break;
+            case 'offense': // fist/blade — Offense
+                ctx.beginPath(); ctx.moveTo(-h, h); ctx.lineTo(h, -h); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(h - 3, -h); ctx.lineTo(h, -h); ctx.lineTo(h, -h + 3); ctx.stroke();
+                break;
+            case 'birds': // wing shape — Birds
+                ctx.beginPath();
+                ctx.moveTo(-h, 2); ctx.quadraticCurveTo(-2, -h, 0, 0);
+                ctx.quadraticCurveTo(2, -h, h, 2);
+                ctx.stroke();
+                break;
+            default: // generic dot
+                ctx.beginPath(); ctx.arc(0, 0, h - 1, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.restore();
     },
 };
 

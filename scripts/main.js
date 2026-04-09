@@ -18,20 +18,27 @@
     const playerStats = new PlayerStats();
 
     // State machine
-    let state = 'menu';        // menu | spells | skins | howtoplay | stats | enemySelect | combat | defeat
-    let scene = new MenuScene(input);
+    let state = 'menu';
+    let scene = new MenuScene(input, defeated);
     let currentEnemy = null;
-    let lastSelectedEnemy = 0;  // index of last selected enemy in select screen
+    let lastSelectedEnemy = 0;
     let combat = null;
+    let net = null;           // NetManager for multiplayer
     let lastTime = performance.now();
 
     function setState(newState, data) {
+        // Clean up combat listeners when leaving combat/mpCombat
+        if ((state === 'combat' || state === 'mpCombat') && combat) {
+            combat.destroy();
+        }
         state = newState;
         input.reset();
 
-        // Music: menu-family states → menu theme, combat → enemy affinity
+        // Music
         if (newState === 'combat') {
             AudioEngine.playMusic(data.affinity || 'fire');
+        } else if (newState === 'mpCombat') {
+            AudioEngine.playMusic('fire');
         } else if (newState === 'defeat') {
             AudioEngine.stopMusic();
             AudioEngine.playSfx('defeat');
@@ -41,7 +48,8 @@
 
         switch (newState) {
             case 'menu':
-                scene = new MenuScene(input);
+                if (net) { net.destroy(); net = null; }
+                scene = new MenuScene(input, defeated);
                 break;
             case 'spells':
                 scene = new SpellListScene(input);
@@ -69,6 +77,29 @@
             case 'defeat':
                 scene = new DefeatScene(input);
                 break;
+            // --- Multiplayer states ---
+            case 'mpMenu':
+                scene = new MPMenuScene(input);
+                break;
+            case 'mpHost':
+                net = new NetManager();
+                scene = new MPHostScene(input, net, playerSkin);
+                break;
+            case 'mpJoin':
+                net = new NetManager();
+                scene = new MPJoinScene(input, net, playerSkin);
+                break;
+            case 'mpCombat': {
+                // data = { isHost, remoteSkin }
+                const dummyEnemy = { id: 'pvp', name: 'Player 2', affinity: 'fire', spells: [], color: '#d94a4a', aiSpeed: 1 };
+                combat = new Combat(dummyEnemy, input, playerSkin, null, {
+                    net: net,
+                    isHost: data.isHost,
+                    remoteSkin: data.remoteSkin || null,
+                });
+                scene = combat;
+                break;
+            }
         }
     }
 
@@ -95,6 +126,7 @@
             case 'menu':
                 result = scene.update(dt);
                 if (result === 'Fight') setState('enemySelect');
+                else if (result === 'Versus') setState('mpMenu');
                 else if (result === 'Spells') setState('spells');
                 else if (result === 'Skins') setState('skins');
                 else if (result === 'Options') setState('options');
@@ -185,6 +217,64 @@
                 result = scene.update(dt);
                 if (result === 'retry') setState('combat', currentEnemy);
                 else if (result === 'menu') setState('menu');
+                break;
+
+            // --- Multiplayer states ---
+            case 'mpMenu':
+                result = scene.update(dt);
+                if (result === 'Host') setState('mpHost');
+                else if (result === 'Join') setState('mpJoin');
+                else if (result === 'back' || result === 'Back') setState('menu');
+                break;
+
+            case 'mpHost':
+                result = scene.update(dt);
+                if (result === 'back') setState('menu');
+                else if (result && result.action === 'start') {
+                    setState('mpCombat', { isHost: true, remoteSkin: result.remoteSkin || null });
+                }
+                break;
+
+            case 'mpJoin':
+                result = scene.update(dt);
+                if (result === 'back') setState('menu');
+                else if (result && result.action === 'start') {
+                    setState('mpCombat', { isHost: false, remoteSkin: result.remoteSkin || null });
+                }
+                break;
+
+            case 'mpCombat':
+                // Pause toggle
+                if (input.wasPressed('Escape')) {
+                    combat.paused = !combat.paused;
+                    combat.pauseSelected = 0;
+                }
+                if (combat.paused) {
+                    if (input.wasPressed('ArrowUp') || input.wasPressed('ArrowDown')) {
+                        combat.pauseSelected = 1 - combat.pauseSelected;
+                    }
+                    if (input.wasPressed('Enter') || input.wasPressed('KeyZ')) {
+                        if (combat.pauseSelected === 0) {
+                            combat.paused = false;
+                        } else {
+                            if (net) { net.destroy(); net = null; }
+                            setState('menu');
+                        }
+                    }
+                } else {
+                    result = combat.update(dt);
+                    if (result === 'win') {
+                        AudioEngine.stopMusic();
+                        AudioEngine.playSfx('victory');
+                        if (net) { net.destroy(); net = null; }
+                        setState('menu');
+                    } else if (result === 'lose') {
+                        AudioEngine.stopMusic();
+                        AudioEngine.playSfx('defeat');
+                        if (net) { net.destroy(); net = null; }
+                        setState('menu');
+                    }
+                }
                 break;
         }
 

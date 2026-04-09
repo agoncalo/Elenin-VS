@@ -157,19 +157,18 @@ const UI = {
         return weight + ' ' + size + 'px ' + CONFIG.FONT;
     },
 
-    // Draw a vertical Megaman-style pip bar
-    drawPipBar(ctx, x, y, w, h, current, max, fillColor, emptyColor, label, showNum) {
+    // Draw a vertical smooth bar
+    drawPipBar(ctx, x, y, w, h, current, max, fillColor, emptyColor, label, showNum, trailValue) {
         if (max <= 0) return;
         if (showNum === undefined) showNum = true;
+        if (trailValue === undefined) trailValue = current;
 
         const topMargin = showNum ? 34 : 22;
         const botMargin = 6;
         const availH = h - topMargin - botMargin;
-        const gap = 2;
-        const maxPips = Math.min(max, Math.floor(availH / (5 + gap)));
-        const pipsToShow = Math.max(1, maxPips);
-        const pipH = Math.floor((availH - (pipsToShow - 1) * gap) / pipsToShow);
-        const startY = y + topMargin;
+        const barX = x + 3;
+        const barW = w - 6;
+        const barY = y + topMargin;
 
         // Label
         ctx.fillStyle = '#99aabb';
@@ -184,31 +183,220 @@ const UI = {
             ctx.fillText(current + '/' + max, x + w / 2, y + 28);
         }
 
-        // Pips
-        const filledPips = current <= 0 ? 0 : current >= max ? pipsToShow : Math.round((current / max) * pipsToShow);
+        const frac = Math.max(0, Math.min(1, current / max));
+        const trailFrac = Math.max(0, Math.min(1, trailValue / max));
+        const fillH = Math.round(availH * frac);
+        const trailH = Math.round(availH * trailFrac);
 
-        for (let i = 0; i < pipsToShow; i++) {
-            const py = y + h - botMargin - (i + 1) * pipH - i * gap;
-            const filled = i < filledPips;
-            const col = filled ? fillColor : emptyColor;
+        // Empty background
+        ctx.fillStyle = emptyColor;
+        ctx.fillRect(barX, barY, barW, availH);
 
-            ctx.fillStyle = col;
-            ctx.fillRect(x + 3, py, w - 6, pipH);
+        // Trail (ghost of recent damage)
+        if (trailH > fillH) {
+            ctx.fillStyle = shadeColor(fillColor, 40);
+            ctx.globalAlpha = 0.55;
+            ctx.fillRect(barX, barY + availH - trailH, barW, trailH - fillH);
+            ctx.globalAlpha = 1;
+        }
 
-            if (filled) {
-                ctx.fillStyle = 'rgba(255,255,255,0.18)';
-                ctx.fillRect(x + 3, py, w - 6, Math.max(1, Math.floor(pipH / 3)));
-            }
+        // Filled portion (from bottom)
+        if (fillH > 0) {
+            ctx.fillStyle = fillColor;
+            ctx.fillRect(barX, barY + availH - fillH, barW, fillH);
 
-            if (filled && current <= max * 0.25) {
+            // Highlight strip on left edge
+            ctx.fillStyle = 'rgba(255,255,255,0.18)';
+            ctx.fillRect(barX, barY + availH - fillH, Math.max(1, Math.floor(barW / 3)), fillH);
+
+            // Low-HP pulsing red overlay
+            if (frac <= 0.25) {
                 ctx.fillStyle = 'rgba(255,0,0,' + (0.3 + Math.sin(Date.now() / 200) * 0.2) + ')';
-                ctx.fillRect(x + 3, py, w - 6, pipH);
+                ctx.fillRect(barX, barY + availH - fillH, barW, fillH);
             }
         }
 
+        // Border
         ctx.strokeStyle = 'rgba(255,255,255,0.12)';
         ctx.lineWidth = 1;
-        ctx.strokeRect(x + 2, y + topMargin - 1, w - 4, availH + 2);
+        ctx.strokeRect(barX - 1, barY - 1, barW + 2, availH + 2);
+    },
+
+    // Draw a small distinct icon for a spell in the slot machine strip
+    drawSpellIcon(ctx, x, y, comboKey) {
+        const spell = SPELL_DATA[comboKey];
+        if (!spell) return;
+        const col = AFFINITY_COLORS[spell.affinity] || '#ccc';
+        const s = 7;
+
+        ctx.save();
+        switch (spell.icon) {
+            case 'shuriken':
+                Sprites.shuriken(ctx, x - s, y - s, s * 2, Date.now() / 200);
+                break;
+            case 'sword': {
+                // Mini katana — long curved blade
+                ctx.translate(x, y);
+                ctx.rotate(-0.4);
+                // Long blade with slight curve
+                ctx.fillStyle = '#ddeeff';
+                ctx.beginPath();
+                ctx.moveTo(-1, 1);       // base left
+                ctx.quadraticCurveTo(-2.5, -8, 0, -16); // curved tip
+                ctx.quadraticCurveTo(2.5, -8, 1, 1);    // curved back
+                ctx.closePath();
+                ctx.fill();
+                // Edge highlight
+                ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+                ctx.lineWidth = 0.6;
+                ctx.beginPath();
+                ctx.quadraticCurveTo(-2.5, -8, 0, -16);
+                ctx.stroke();
+                // Guard (tsuba) - small oval
+                ctx.fillStyle = '#d4a017';
+                ctx.beginPath();
+                ctx.ellipse(0, 1.5, 4, 1.8, 0, 0, Math.PI * 2);
+                ctx.fill();
+                // Handle (tsuka)
+                ctx.fillStyle = '#442211';
+                ctx.fillRect(-1.2, 3, 2.4, 8);
+                // Handle wrapping
+                ctx.strokeStyle = '#d4a017';
+                ctx.lineWidth = 0.8;
+                for (let i = 0; i < 3; i++) {
+                    const hy = 4 + i * 2.5;
+                    ctx.beginPath();
+                    ctx.moveTo(-1.2, hy); ctx.lineTo(1.2, hy + 1.2);
+                    ctx.stroke();
+                }
+                break;
+            }
+            case 'arrow':
+                Sprites.arrow(ctx, x - s, y - s, s * 2, 'right');
+                break;
+            case 'fireball':
+                Sprites.fireball(ctx, x - s, y - s, s * 2);
+                break;
+            case 'iceshard':
+                Sprites.iceShard(ctx, x - s, y - s, s * 2);
+                break;
+            case 'poison':
+                Sprites.poisonCloud(ctx, x - s, y - s, s * 2, 0.8);
+                break;
+            case 'boulder':
+                Sprites.boulder(ctx, x - s, y - s, s * 2);
+                break;
+            case 'enchant_fire':
+            case 'enchant_ice':
+            case 'enchant_shock': {
+                // Colored filled circle with glow
+                ctx.shadowColor = col;
+                ctx.shadowBlur = 6;
+                ctx.fillStyle = col;
+                ctx.beginPath();
+                ctx.arc(x, y, 6, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+                break;
+            }
+            case 'shield': {
+                // Pointed kite shield shape
+                ctx.fillStyle = '#aaddff';
+                ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+                ctx.lineWidth = 1.2;
+                ctx.beginPath();
+                ctx.moveTo(x, y - 8);      // top center
+                ctx.lineTo(x + 7, y - 4);  // top-right
+                ctx.lineTo(x + 7, y + 1);  // mid-right
+                ctx.lineTo(x, y + 9);      // bottom point
+                ctx.lineTo(x - 7, y + 1);  // mid-left
+                ctx.lineTo(x - 7, y - 4);  // top-left
+                ctx.closePath();
+                ctx.globalAlpha = 0.6;
+                ctx.fill();
+                ctx.globalAlpha = 0.9;
+                ctx.stroke();
+                // Center line
+                ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+                ctx.beginPath();
+                ctx.moveTo(x, y - 6); ctx.lineTo(x, y + 7);
+                ctx.stroke();
+                break;
+            }
+            case 'invis': {
+                // Ghostly faded circle with wisp arcs
+                ctx.globalAlpha = 0.35;
+                ctx.fillStyle = '#aaccff';
+                ctx.beginPath();
+                ctx.arc(x, y, 6, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(200,200,255,0.6)';
+                ctx.lineWidth = 1;
+                for (let i = 0; i < 3; i++) {
+                    const a = (Date.now() / 800 + i * 2.1) % (Math.PI * 2);
+                    ctx.beginPath();
+                    ctx.arc(x, y, 3 + i * 1.5, a, a + 1);
+                    ctx.stroke();
+                }
+                break;
+            }
+            case 'deflect': {
+                // 3 orbiting mirror shards
+                const t = Date.now() / 400;
+                for (let i = 0; i < 3; i++) {
+                    const a = t + i * (Math.PI * 2 / 3);
+                    const dx = Math.cos(a) * 5;
+                    const dy = Math.sin(a) * 5;
+                    ctx.fillStyle = '#ff69b4';
+                    ctx.shadowColor = '#ff69b4';
+                    ctx.shadowBlur = 3;
+                    ctx.fillRect(x + dx - 1.5, y + dy - 3, 3, 6);
+                }
+                ctx.shadowBlur = 0;
+                break;
+            }
+            case 'freeze_lane': {
+                // 3 small ice shards in a row
+                const isz = 8;
+                for (let i = -1; i <= 1; i++)
+                    Sprites.iceShard(ctx, x + i * 7 - isz / 2, y - isz / 2, isz);
+                break;
+            }
+            case 'burn_lane': {
+                // 3 small fireballs in a row
+                const fsz = 8;
+                for (let i = -1; i <= 1; i++)
+                    Sprites.fireball(ctx, x + i * 7 - fsz / 2, y - fsz / 2, fsz);
+                break;
+            }
+            case 'aoe_fire':
+            case 'aoe_ice':
+            case 'aoe_shock': {
+                // Radiating lines + element core
+                ctx.strokeStyle = col;
+                ctx.lineWidth = 1.5;
+                for (let i = 0; i < 6; i++) {
+                    const a = i * Math.PI / 3;
+                    ctx.beginPath();
+                    ctx.moveTo(x + Math.cos(a) * 3.5, y + Math.sin(a) * 3.5);
+                    ctx.lineTo(x + Math.cos(a) * 7, y + Math.sin(a) * 7);
+                    ctx.stroke();
+                }
+                ctx.beginPath();
+                ctx.arc(x, y, 3, 0, Math.PI * 2);
+                ctx.fillStyle = col;
+                ctx.fill();
+                break;
+            }
+            default:
+                // Summons
+                Sprites.summon(ctx, x - 8, y - 8, 16, col, spell.icon, 1, 'right');
+                break;
+        }
+        ctx.restore();
     },
 
     // Draw the combo orb display (bottom center)
@@ -219,6 +407,14 @@ const UI = {
         const spacing = 54;
         const colors = { 'Z': CONFIG.C.ORB_Z, 'X': CONFIG.C.ORB_X, 'C': CONFIG.C.ORB_C };
         const isCooling = postCastProgress > 0;
+
+        // Slot machine icon mapping for each tree depth
+        const slotIcons = {
+            '':  ['sword', 'magic', 'summon'],
+            'Z': ['ranged', 'enchant', 'defend'],
+            'X': ['projectile', 'lane', 'ultimate'],
+            'C': ['support', 'offense', 'birds'],
+        };
 
         // Background
         Sprites.roundRect(ctx, cx - 95, cy - 30, 190, 60, 12, 'rgba(0,0,0,0.6)', 'rgba(255,255,255,0.08)');
@@ -239,7 +435,6 @@ const UI = {
             const orbColor = filled ? colors[combo[i]] : null;
 
             if (isCooling && filled) {
-                // Fading out the last combo orbs
                 ctx.save();
                 ctx.globalAlpha = 0.35 + postCastProgress * 0.6;
                 Sprites.orb(ctx, ox, cy, orbR, orbColor, true);
@@ -260,6 +455,43 @@ const UI = {
             } else {
                 ctx.fillStyle = '#555';
                 ctx.fillText('?', ox, cy + orbR + 14);
+            }
+        }
+
+        // Slot machine hint strip centered above the orbs
+        if (!isCooling) {
+            const depth = combo.length;
+            if (depth < 3) {
+                const prefix = combo.join('');
+                const keys = ['Z', 'X', 'C'];
+
+                const slotW = 40;
+                const slotH = 24;
+                const slotGap = 3;
+                const totalW = slotW * 3 + slotGap * 2;
+                const sx = cx - totalW / 2;
+                const sy = cy - orbR - 32;
+
+                // Slot background pill
+                Sprites.roundRect(ctx, sx - 3, sy - 2, totalW + 6, slotH + 4, 6, 'rgba(0,0,0,0.55)', 'rgba(255,255,255,0.1)');
+
+                for (let k = 0; k < 3; k++) {
+                    const comboKey = prefix + keys[k].repeat(3 - depth);
+                    const lx = sx + k * (slotW + slotGap) + slotW / 2;
+                    const ly = sy + slotH / 2;
+
+                    ctx.globalAlpha = 0.75;
+                    this.drawSpellIcon(ctx, lx, ly, comboKey);
+                    ctx.globalAlpha = 1;
+                }
+
+                // Divider lines between slots
+                ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+                ctx.lineWidth = 1;
+                for (let d = 1; d < 3; d++) {
+                    const dx = sx + d * (slotW + slotGap) - slotGap / 2;
+                    ctx.beginPath(); ctx.moveTo(dx, sy + 2); ctx.lineTo(dx, sy + slotH - 2); ctx.stroke();
+                }
             }
         }
 

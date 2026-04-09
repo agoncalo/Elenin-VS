@@ -49,6 +49,10 @@ class Fighter extends Entity {
         this.spellOnScreen = {};  // { comboKey: true } - limits one per combo
         this.color = owner === 'player' ? CONFIG.C.PLAYER : CONFIG.C.ENEMY;
         this.hitFlash = 0;
+        // Trailing bar values (for damage ghost effect)
+        this.trailHp = maxHp;
+        this.trailLoyalty = maxLoyalty;
+        this.loyHitFlash = 0; // flash timer when loyalty is hit
     }
 
     update(dt) {
@@ -65,6 +69,24 @@ class Fighter extends Entity {
         if (this.stunTimer > 0) this.stunTimer -= dt;
         if (this.freezeTimer > 0) this.freezeTimer -= dt;
         if (this.hitFlash > 0) this.hitFlash -= dt;
+        if (this.loyHitFlash > 0) this.loyHitFlash -= dt;
+
+        // Trailing bars — hold 400ms then decay fast
+        if (this.trailHp > this.hp) {
+            if (this.hitFlash > 0) { /* hold while flashing */ }
+            else {
+                this.trailHp -= dt * 0.02;
+                if (this.trailHp < this.hp) this.trailHp = this.hp;
+            }
+        } else { this.trailHp = this.hp; }
+
+        if (this.trailLoyalty > this.loyalty) {
+            if (this.loyHitFlash > 0) { /* hold while flashing */ }
+            else {
+                this.trailLoyalty -= dt * 0.02;
+                if (this.trailLoyalty < this.loyalty) this.trailLoyalty = this.loyalty;
+            }
+        } else { this.trailLoyalty = this.loyalty; }
 
         // Burn DoT
         if (this.burnTimer > 0) {
@@ -146,6 +168,7 @@ class Fighter extends Entity {
         this.hp -= amount;
         this.hitFlash = 250;
         if (this.hp <= 0) this.hp = 0;
+        // trailHp stays high — it will decay in update()
         if (effects) {
             effects.hit(this.cx, this.cy, amount >= 3 ? '#ffaa00' : '#ff4444');
             effects.damageNumber(this.cx, this.y, amount);
@@ -631,6 +654,15 @@ class Summon extends Entity {
             frozen: this.freezeTimer > 0,
             stunned: this.stunTimer > 0,
         });
+
+        // Combo label below summon
+        const label = this.comboKey.split('').join('-');
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.font = '700 10px ' + CONFIG.FONT;
+        ctx.textAlign = 'center';
+        ctx.fillText(label, scx, drawY + size + 11);
+        ctx.fillStyle = '#ddeeff';
+        ctx.fillText(label, scx, drawY + size + 10);
     }
 
     getLanes() {

@@ -2,29 +2,58 @@
 // combat.js - Battle scene: game logic, collision, rendering
 // ============================================================
 class Combat {
-    constructor(enemyData, input, playerSkin, stats) {
+    constructor(enemyData, input, playerSkin, stats, netOpts) {
         this.enemyData = enemyData;
         this.input = input;
         this.stats = stats || null;
         this.effects = new EffectsManager();
 
-        // Player
+        // Multiplayer
+        this.netMode = !!(netOpts && netOpts.net);
+        this.net = netOpts ? netOpts.net : null;
+        this.isHost = this.netMode ? (netOpts.isHost !== false) : true;
+        this.remoteInput = null;
+        this._syncTimer = 0;
+        this._disconnected = false;
+        this._rematchState = null; // null | 'choosing' | 'waiting' | 'accepted'
+        this._rematchSelected = 0; // 0=Rematch, 1=Quit
+        this._remoteWantsRematch = false;
+
+        // Player (left side)
         const px = CONFIG.FIELD_LEFT + 30;
         this.player = new Fighter(px, 2, 'player', CONFIG.BASE_HP, CONFIG.BASE_LOYALTY);
         this.player.speed = CONFIG.PLAYER_SPEED;
-        this.player.color = playerSkin ? playerSkin.color : CONFIG.C.PLAYER;
-        this.player.skin = playerSkin || null;
+        if (this.netMode && !this.isHost) {
+            // Guest: left side shows the host (remote) skin
+            this.player.color = (netOpts.remoteSkin && netOpts.remoteSkin.color) || CONFIG.C.PLAYER;
+            this.player.skin = netOpts.remoteSkin || null;
+        } else {
+            this.player.color = playerSkin ? playerSkin.color : CONFIG.C.PLAYER;
+            this.player.skin = playerSkin || null;
+        }
 
-        // Enemy
+        // Enemy (right side)
         const ex = CONFIG.FIELD_RIGHT - CONFIG.SPRITE - 30;
         this.enemy = new Fighter(ex, 2, 'enemy', CONFIG.BASE_HP, CONFIG.BASE_LOYALTY);
-        this.enemy.color = enemyData.color || CONFIG.C.ENEMY;
-        this.enemy.speed = CONFIG.PLAYER_SPEED * (enemyData.aiSpeed || 0.6);
-        // Find matching skin for this enemy
-        const enemySkin = PLAYER_SKINS.find(s => s.unlockEnemy === enemyData.id);
-        this.enemy.skin = enemySkin || null;
+        if (this.netMode) {
+            this.enemy.speed = CONFIG.PLAYER_SPEED;
+            if (this.isHost) {
+                // Host: right side shows the guest (remote) skin
+                this.enemy.color = (netOpts.remoteSkin && netOpts.remoteSkin.color) || CONFIG.C.ENEMY;
+                this.enemy.skin = netOpts.remoteSkin || null;
+            } else {
+                // Guest: right side shows our own skin
+                this.enemy.color = playerSkin ? playerSkin.color : CONFIG.C.ENEMY;
+                this.enemy.skin = playerSkin || null;
+            }
+        } else {
+            this.enemy.color = enemyData.color || CONFIG.C.ENEMY;
+            this.enemy.speed = CONFIG.PLAYER_SPEED * (enemyData.aiSpeed || 0.6);
+            const enemySkin = PLAYER_SKINS.find(s => s.unlockEnemy === enemyData.id);
+            this.enemy.skin = enemySkin || null;
+        }
 
-        this.ai = new EnemyAI(this.enemy, enemyData);
+        this.ai = this.netMode ? null : new EnemyAI(this.enemy, enemyData);
 
         // Entity lists
         this.projectiles = [];
@@ -43,8 +72,8 @@ class Combat {
         this.castHistory = [];
         this.enemyCastHistory = [];
 
-        // Tutorial overlay
-        this.showTutorial = !localStorage.getItem('eleninVS_tutorialSeen');
+        // Tutorial overlay (skip in multiplayer)
+        this.showTutorial = !this.netMode && !localStorage.getItem('eleninVS_tutorialSeen');
         this.tutorialCasted = false;
         this.tutorialDelay = this.showTutorial ? 1000 : 0;
 
@@ -52,14 +81,44 @@ class Combat {
         this.windups = [];
         // Lingering kanji floaters after windups
         this._kanjiFloaters = [];
+        // Side panel flash timers (backline hits)
+        this._panelFlashL = 0;
+        this._panelFlashR = 0;
 
         // Battlefield theme based on enemy affinity
-        this.theme = this._getTheme(enemyData.affinity);
+        this.theme = this._getTheme(this.netMode ? 'fire' : enemyData.affinity);
         this.ambientTimer = 0;
         this.ambientParticles = [];
 
         // Hook up spell casting
         this.input.onSpellCast = (key) => this._onPlayerCast(key);
+
+        // Multiplayer: set up local/remote fighter references & networking
+        if (this.netMode) {
+            // Host controls left (player), guest controls right (enemy)
+            this.localFighter = this.isHost ? this.player : this.enemy;
+            this.remoteFighter = this.isHost ? this.enemy : this.player;
+
+            this.remoteInput = new RemoteInput();
+            this.remoteInput.onSpellCast = (key) => this._onRemoteCast(key);
+            this.net.onMessage = (msg) => this._onNetMessage(msg);
+            this.net.onDisconnect = () => { this._disconnected = true; };
+
+            // Intercept local movement keys to send over network
+            const moveCodes = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];
+            this._netKeyDown = (e) => {
+                if (moveCodes.includes(e.code)) {
+                    this.net.send({ t: 'k', c: e.code, d: 1 });
+                }
+            };
+            this._netKeyUp = (e) => {
+                if (moveCodes.includes(e.code)) {
+                    this.net.send({ t: 'k', c: e.code, d: 0 });
+                }
+            };
+            window.addEventListener('keydown', this._netKeyDown);
+            window.addEventListener('keyup', this._netKeyUp);
+        }
 
         // Wrap takeDamage for stats tracking
         if (this.stats) {
@@ -80,6 +139,14 @@ class Combat {
         }
     }
 
+    // Clean up network listeners (call when leaving combat)
+    destroy() {
+        if (this._netKeyDown) {
+            window.removeEventListener('keydown', this._netKeyDown);
+            window.removeEventListener('keyup', this._netKeyUp);
+        }
+    }
+
     _onPlayerCast(comboKey) {
         if (this.result) return;
         // Tutorial: block casting during delay, then mark first cast
@@ -89,12 +156,129 @@ class Combat {
         }
         const spell = SPELL_DATA[comboKey];
         if (!spell) return;
-        if (!this.player.canCast(comboKey)) {
-            this.effects.statusText(this.player.cx, this.player.y - 15, 'NOT READY', '#ff4444');
+        // In multiplayer, local input controls localFighter
+        const caster = this.netMode ? this.localFighter : this.player;
+        if (!caster.canCast(comboKey)) {
+            this.effects.statusText(caster.cx, caster.y - 15, 'NOT READY', '#ff4444');
             AudioEngine.playSfx('notReady');
             return;
         }
-        this.executeSpell(comboKey, this.player);
+        this.executeSpell(comboKey, caster);
+        // Send cast to remote peer
+        if (this.netMode && this.net) {
+            this.net.send({ t: 's', c: comboKey });
+        }
+    }
+
+    // Multiplayer: remote peer cast a spell
+    _onRemoteCast(comboKey) {
+        if (this.result) return;
+        const spell = SPELL_DATA[comboKey];
+        if (!spell) return;
+        const caster = this.remoteFighter;
+        if (!caster.canCast(comboKey)) return;
+        this.executeSpell(comboKey, caster);
+    }
+
+    // Multiplayer: incoming network message
+    _onNetMessage(msg) {
+        if (!this.remoteInput) return;
+        switch (msg.t) {
+            case 'k': // key down/up
+                if (msg.d) this.remoteInput.remoteKeyDown(msg.c);
+                else this.remoteInput.remoteKeyUp(msg.c);
+                break;
+            case 's': // spell cast
+                this.remoteInput.remoteCast(msg.c);
+                break;
+            case 'y': // state correction from host
+                if (!this.net.isHost) {
+                    // Apply corrections from host
+                    if (msg.ph != null) this.player.hp = msg.ph;
+                    if (msg.pl != null) this.player.loyalty = msg.pl;
+                    if (msg.eh != null) this.enemy.hp = msg.eh;
+                    if (msg.el != null) this.enemy.loyalty = msg.el;
+                }
+                break;
+            case 'm': // rematch
+                if (msg.v === 0) {
+                    // Remote quit
+                    this._disconnected = true;
+                } else if (msg.v === 1) {
+                    // Remote wants rematch
+                    this._remoteWantsRematch = true;
+                } else if (msg.v === 2) {
+                    // Remote confirmed rematch start
+                    this._rematchState = 'accepted';
+                    this._resetForRematch();
+                }
+                break;
+        }
+    }
+
+    // Multiplayer: send local key state to remote
+    _netSendKey(code, down) {
+        if (this.netMode && this.net) {
+            this.net.send({ t: 'k', c: code, d: down ? 1 : 0 });
+        }
+    }
+
+    // Multiplayer: reset combat state for rematch
+    _resetForRematch() {
+        this.player.hp = CONFIG.BASE_HP;
+        this.player.loyalty = CONFIG.BASE_LOYALTY;
+        this.player.trailHp = CONFIG.BASE_HP;
+        this.player.trailLoyalty = CONFIG.BASE_LOYALTY;
+        this.player.loyHitFlash = 0;
+        this.player.x = CONFIG.FIELD_LEFT + 30;
+        this.player.lane = 2;
+        this.player._targetLane = 2;
+        this.player.stunTimer = 0;
+        this.player.freezeTimer = 0;
+        this.player.burnTimer = 0;
+        this.player.poisonTimer = 0;
+        this.player.enchant = null;
+        this.player.shielded = false;
+        this.player.invisible = false;
+        this.player.deflecting = false;
+        this.player.cooldowns = {};
+        this.player.spellOnScreen = {};
+
+        this.enemy.hp = CONFIG.BASE_HP;
+        this.enemy.loyalty = CONFIG.BASE_LOYALTY;
+        this.enemy.trailHp = CONFIG.BASE_HP;
+        this.enemy.trailLoyalty = CONFIG.BASE_LOYALTY;
+        this.enemy.loyHitFlash = 0;
+        this.enemy.x = CONFIG.FIELD_RIGHT - CONFIG.SPRITE - 30;
+        this.enemy.lane = 2;
+        this.enemy._targetLane = 2;
+        this.enemy.stunTimer = 0;
+        this.enemy.freezeTimer = 0;
+        this.enemy.burnTimer = 0;
+        this.enemy.poisonTimer = 0;
+        this.enemy.enchant = null;
+        this.enemy.shielded = false;
+        this.enemy.invisible = false;
+        this.enemy.deflecting = false;
+        this.enemy.cooldowns = {};
+        this.enemy.spellOnScreen = {};
+
+        this.projectiles = [];
+        this.summons = [];
+        this.laneEffects = [];
+        this.windups = [];
+        this._kanjiFloaters = [];
+        this.castHistory = [];
+        this.enemyCastHistory = [];
+        this.spellInfo = null;
+        this.spellInfoTimer = 0;
+        this.result = null;
+        this.resultTimer = 0;
+        this._rematchState = null;
+        this._rematchSelected = 0;
+        this._remoteWantsRematch = false;
+        this._syncTimer = 0;
+        this.effects = new EffectsManager();
     }
 
     executeSpell(comboKey, caster) {
@@ -105,17 +289,26 @@ class Combat {
 
         caster.startCooldown(comboKey, stats.cd || 1000);
         const isPlayer = caster.owner === 'player';
+        const isLocalCast = this.netMode ? (caster === this.localFighter) : isPlayer;
 
-        // Show spell info (player only)
-        if (isPlayer) {
+        // Show spell info for local caster
+        if (isLocalCast) {
             this.spellInfo = { comboKey, stats };
             this.spellInfoTimer = 2500;
+        }
+        // Cast history by position
+        if (isPlayer) {
             this.castHistory.unshift({ comboKey });
             if (this.castHistory.length > 8) this.castHistory.length = 8;
             if (this.stats) this.stats.recordSpellCast(comboKey);
         } else {
             this.enemyCastHistory.unshift({ comboKey });
             if (this.enemyCastHistory.length > 8) this.enemyCastHistory.length = 8;
+            // Kaen shouts his combinations so the player learns
+            if (this.enemyData.id === 'kaen') {
+                const label = comboKey.split('').join(' ') + '!!';
+                this.effects.statusText(caster.cx, caster.y - 30, label, '#ff3333');
+            }
         }
 
         if (spell.type === 'projectile' && spell.affinity === 'none') {
@@ -973,6 +1166,7 @@ class Combat {
         const owner = summon.owner === 'player' ? this.player : this.enemy;
         owner.loyalty -= loyDrop;
         if (owner.loyalty < 0) owner.loyalty = 0;
+        owner.loyHitFlash = 300;
         this.effects.statusText(summon.cx, summon.y - 20, 'LOYALTY -' + loyDrop, CONFIG.C.LOYALTY);
     }
 
@@ -982,6 +1176,7 @@ class Combat {
             const loyDrop = Math.ceil(summon.loyaltyVal * CONFIG.LOYALTY_PER_HP);
             this.enemy.loyalty -= loyDrop;
             if (this.enemy.loyalty < 0) this.enemy.loyalty = 0;
+            this.enemy.loyHitFlash = 300;
             this.effects.statusText(summon.cx, summon.y - 20, 'LOYALTY -' + loyDrop, CONFIG.C.LOYALTY);
             if (this.stats) this.stats.recordSummonKill();
             AudioEngine.playSfx('death');
@@ -989,6 +1184,7 @@ class Combat {
             const loyDrop = Math.ceil(summon.loyaltyVal * CONFIG.LOYALTY_PER_HP);
             this.player.loyalty -= loyDrop;
             if (this.player.loyalty < 0) this.player.loyalty = 0;
+            this.player.loyHitFlash = 300;
             this.effects.statusText(summon.cx, summon.y - 20, 'LOYALTY -' + loyDrop, CONFIG.C.LOYALTY);
             if (this.stats) this.stats.recordOwnSummonLost();
             AudioEngine.playSfx('death');
@@ -1034,36 +1230,160 @@ class Combat {
 
         if (this.result) {
             this.resultTimer -= dt;
-            return this.resultTimer <= 0 ? this.result : null;
+            if (this.resultTimer <= 0) {
+                // Multiplayer: show rematch overlay instead of exiting
+                if (this.netMode && this._rematchState === null) {
+                    this._rematchState = 'choosing';
+                    return null;
+                }
+                // Multiplayer rematch flow
+                if (this.netMode && this._rematchState) {
+                    if (this._rematchState === 'choosing') {
+                        if (this.input.wasPressed('ArrowUp') || this.input.wasPressed('ArrowDown')) {
+                            this._rematchSelected = 1 - this._rematchSelected;
+                        }
+                        if (this.input.wasPressed('Enter') || this.input.wasPressed('KeyZ')) {
+                            if (this._rematchSelected === 0) {
+                                // Want rematch
+                                this.net.send({ t: 'm', v: 1 });
+                                if (this._remoteWantsRematch) {
+                                    this._rematchState = 'accepted';
+                                    this.net.send({ t: 'm', v: 2 }); // confirm
+                                    this._resetForRematch();
+                                } else {
+                                    this._rematchState = 'waiting';
+                                }
+                            } else {
+                                // Quit
+                                this.net.send({ t: 'm', v: 0 });
+                                return this.result;
+                            }
+                        }
+                        return null;
+                    }
+                    if (this._rematchState === 'waiting') {
+                        // Waiting for remote to also pick rematch
+                        if (this._remoteWantsRematch) {
+                            this._rematchState = 'accepted';
+                            this.net.send({ t: 'm', v: 2 });
+                            this._resetForRematch();
+                        }
+                        if (this._disconnected) return this.result;
+                        return null;
+                    }
+                    // accepted → combat was reset, fall through to normal update
+                    return null;
+                }
+                return this.result;
+            }
+            return null;
         }
 
-        // Input: player movement
-        const p = this.player;
-        if (!p.isStunned()) {
-            if (this.input.isDown('ArrowLeft')) {
-                p.x = Math.max(CONFIG.FIELD_LEFT + 5, p.x - p.speed * (dt / 16));
+        // Multiplayer: check for disconnect
+        if (this.netMode && this._disconnected && !this.result) {
+            this.result = 'win';
+            this.resultTimer = 2000;
+            this.effects.statusText(CONFIG.WIDTH / 2, CONFIG.HEIGHT / 2, 'OPPONENT LEFT', '#ffcc00');
+            return null;
+        }
+
+        // Input: local fighter movement
+        if (this.netMode) {
+            // In multiplayer, local input controls localFighter
+            const lf = this.localFighter;
+            if (!lf.isStunned()) {
+                if (this.isHost) {
+                    // Host is on the left side
+                    if (this.input.isDown('ArrowLeft')) {
+                        lf.x = Math.max(CONFIG.FIELD_LEFT + 5, lf.x - lf.speed * (dt / 16));
+                    }
+                    if (this.input.isDown('ArrowRight')) {
+                        lf.x = Math.min(CONFIG.MIDPOINT - CONFIG.SPRITE - 5, lf.x + lf.speed * (dt / 16));
+                    }
+                } else {
+                    // Guest is on the right side: ArrowLeft = move left (forward), ArrowRight = move right (backward)
+                    if (this.input.isDown('ArrowLeft')) {
+                        lf.x = Math.max(CONFIG.MIDPOINT + CONFIG.SPRITE + 5, lf.x - lf.speed * (dt / 16));
+                    }
+                    if (this.input.isDown('ArrowRight')) {
+                        lf.x = Math.min(CONFIG.FIELD_RIGHT - 5, lf.x + lf.speed * (dt / 16));
+                    }
+                }
+                if (this.input.wasPressed('ArrowUp')) lf.switchLane(-1);
+                if (this.input.wasPressed('ArrowDown')) lf.switchLane(1);
             }
-            if (this.input.isDown('ArrowRight')) {
-                p.x = Math.min(CONFIG.MIDPOINT - CONFIG.SPRITE - 5, p.x + p.speed * (dt / 16));
+        } else {
+            // Single player: normal movement
+            const p = this.player;
+            if (!p.isStunned()) {
+                if (this.input.isDown('ArrowLeft')) {
+                    p.x = Math.max(CONFIG.FIELD_LEFT + 5, p.x - p.speed * (dt / 16));
+                }
+                if (this.input.isDown('ArrowRight')) {
+                    p.x = Math.min(CONFIG.MIDPOINT - CONFIG.SPRITE - 5, p.x + p.speed * (dt / 16));
+                }
+                if (this.input.wasPressed('ArrowUp')) {
+                    const dodged = this._hasIncomingProjectile(p.lane);
+                    p.switchLane(-1);
+                    if (this.stats) this.stats.recordLaneSwitch(dodged);
+                }
+                if (this.input.wasPressed('ArrowDown')) {
+                    const dodged = this._hasIncomingProjectile(p.lane);
+                    p.switchLane(1);
+                    if (this.stats) this.stats.recordLaneSwitch(dodged);
+                }
             }
-            if (this.input.wasPressed('ArrowUp')) {
-                const dodged = this._hasIncomingProjectile(p.lane);
-                p.switchLane(-1);
-                if (this.stats) this.stats.recordLaneSwitch(dodged);
+        }
+
+        // Multiplayer: remote player movement
+        if (this.netMode && this.remoteInput) {
+            this.remoteInput.update(dt);
+            const rf = this.remoteFighter;
+            if (!rf.isStunned()) {
+                if (this.isHost) {
+                    // Remote is guest (right side): their ArrowLeft = move left on screen
+                    if (this.remoteInput.isDown('ArrowLeft')) {
+                        rf.x = Math.max(CONFIG.MIDPOINT + CONFIG.SPRITE + 5, rf.x - rf.speed * (dt / 16));
+                    }
+                    if (this.remoteInput.isDown('ArrowRight')) {
+                        rf.x = Math.min(CONFIG.FIELD_RIGHT - 5, rf.x + rf.speed * (dt / 16));
+                    }
+                } else {
+                    // Remote is host (left side): their ArrowLeft = move left on screen
+                    if (this.remoteInput.isDown('ArrowLeft')) {
+                        rf.x = Math.max(CONFIG.FIELD_LEFT + 5, rf.x - rf.speed * (dt / 16));
+                    }
+                    if (this.remoteInput.isDown('ArrowRight')) {
+                        rf.x = Math.min(CONFIG.MIDPOINT - CONFIG.SPRITE - 5, rf.x + rf.speed * (dt / 16));
+                    }
+                }
+                if (this.remoteInput.wasPressed('ArrowUp')) rf.switchLane(-1);
+                if (this.remoteInput.wasPressed('ArrowDown')) rf.switchLane(1);
             }
-            if (this.input.wasPressed('ArrowDown')) {
-                const dodged = this._hasIncomingProjectile(p.lane);
-                p.switchLane(1);
-                if (this.stats) this.stats.recordLaneSwitch(dodged);
-            }
+            this.remoteInput.lateUpdate();
         }
 
         // Update fighters
-        p.update(dt);
+        this.player.update(dt);
         this.enemy.update(dt);
 
-        // Update AI
-        this.ai.update(dt, this);
+        // Update AI (skip in multiplayer)
+        if (this.ai) this.ai.update(dt, this);
+
+        // Multiplayer: periodic host state correction (every 3 seconds)
+        if (this.netMode && this.net && this.net.isHost) {
+            this._syncTimer += dt;
+            if (this._syncTimer >= 3000) {
+                this._syncTimer = 0;
+                this.net.send({
+                    t: 'y',
+                    ph: this.player.hp,
+                    pl: this.player.loyalty,
+                    eh: this.enemy.hp,
+                    el: this.enemy.loyalty,
+                });
+            }
+        }
 
         // Update projectiles
         this.projectiles.forEach(proj => {
@@ -1094,6 +1414,10 @@ class Combat {
                         const drop = 2;
                         victim.loyalty -= drop;
                         if (victim.loyalty < 0) victim.loyalty = 0;
+                        victim.loyHitFlash = 300;
+                        // Flash the side panel
+                        if (victim === this.player) this._panelFlashL = 400;
+                        else this._panelFlashR = 400;
                         this.effects.statusText(
                             proj.dirX > 0 ? CONFIG.FIELD_RIGHT - 30 : CONFIG.FIELD_LEFT + 30,
                             CONFIG.FIELD_TOP + proj.lane * CONFIG.LANE_HEIGHT + CONFIG.LANE_HEIGHT / 2,
@@ -1194,17 +1518,20 @@ class Combat {
         }
 
         // Win/lose check
-        if (this.enemy.hp <= 0 || this.enemy.loyalty <= 0) {
+        // In multiplayer, "win" means the remote fighter is depleted
+        const winTarget = this.netMode ? this.remoteFighter : this.enemy;
+        const loseTarget = this.netMode ? this.localFighter : this.player;
+        if (winTarget.hp <= 0 || winTarget.loyalty <= 0) {
             this.result = 'win';
             this.resultTimer = 2000;
             this.effects.shake(500, 10);
             this.effects.statusText(CONFIG.WIDTH / 2, CONFIG.HEIGHT / 2, 'VICTORY!', '#ffcc00');
             if (this.stats) this.stats.recordFightEnd(true, this.player, this.enemy);
-        } else if (this.player.hp <= 0 || this.player.loyalty <= 0) {
+        } else if (loseTarget.hp <= 0 || loseTarget.loyalty <= 0) {
             this.result = 'lose';
             this.resultTimer = 2000;
             this.effects.shake(500, 8);
-            const reason = this.player.hp <= 0 ? 'DEFEATED' : 'LOYALTY BROKEN';
+            const reason = loseTarget.hp <= 0 ? 'DEFEATED' : 'LOYALTY BROKEN';
             this.effects.statusText(CONFIG.WIDTH / 2, CONFIG.HEIGHT / 2, reason, '#ff4444');
             if (this.stats) this.stats.recordFightEnd(false, this.player, this.enemy);
         }
@@ -1757,42 +2084,72 @@ class Combat {
             });
         }
 
-        // Effects (particles, flashes, text)
-        this.effects.draw(ctx);
-
         // Tutorial overlay — drawn UNDER UI so bars/orbs/history are visible on top
         if (this.showTutorial) {
             this._drawTutorial(ctx);
         }
 
         // --- UI ---
+        // Decay panel flash timers
+        if (this._panelFlashL > 0) this._panelFlashL -= 16;
+        if (this._panelFlashR > 0) this._panelFlashR -= 16;
+
         // Side panels background
         ctx.fillStyle = CONFIG.C.PANEL;
         ctx.fillRect(0, CONFIG.TOP_BAR, CONFIG.SIDE_PANEL, CONFIG.HEIGHT - CONFIG.TOP_BAR);
         ctx.fillRect(CONFIG.WIDTH - CONFIG.SIDE_PANEL, CONFIG.TOP_BAR, CONFIG.SIDE_PANEL, CONFIG.HEIGHT - CONFIG.TOP_BAR);
 
+        // Panel flash overlay on backline hit — bright flash on the field edge
+        if (this._panelFlashL > 0) {
+            const a = Math.min(0.6, this._panelFlashL / 400 * 0.6);
+            // Flash the left field edge
+            const grd = ctx.createLinearGradient(CONFIG.FIELD_LEFT, 0, CONFIG.FIELD_LEFT + 60, 0);
+            grd.addColorStop(0, 'rgba(241,196,15,' + a + ')');
+            grd.addColorStop(1, 'rgba(241,196,15,0)');
+            ctx.fillStyle = grd;
+            ctx.fillRect(CONFIG.FIELD_LEFT, CONFIG.TOP_BAR, 60, CONFIG.FIELD_HEIGHT);
+            // Also tint the side panel
+            ctx.fillStyle = 'rgba(241,196,15,' + (a * 0.5) + ')';
+            ctx.fillRect(0, CONFIG.TOP_BAR, CONFIG.SIDE_PANEL, CONFIG.HEIGHT - CONFIG.TOP_BAR);
+        }
+        if (this._panelFlashR > 0) {
+            const a = Math.min(0.6, this._panelFlashR / 400 * 0.6);
+            // Flash the right field edge
+            const grd = ctx.createLinearGradient(CONFIG.FIELD_RIGHT - 60, 0, CONFIG.FIELD_RIGHT, 0);
+            grd.addColorStop(0, 'rgba(241,196,15,0)');
+            grd.addColorStop(1, 'rgba(241,196,15,' + a + ')');
+            ctx.fillStyle = grd;
+            ctx.fillRect(CONFIG.FIELD_RIGHT - 60, CONFIG.TOP_BAR, 60, CONFIG.FIELD_HEIGHT);
+            // Also tint the side panel
+            ctx.fillStyle = 'rgba(241,196,15,' + (a * 0.5) + ')';
+            ctx.fillRect(CONFIG.WIDTH - CONFIG.SIDE_PANEL, CONFIG.TOP_BAR, CONFIG.SIDE_PANEL, CONFIG.HEIGHT - CONFIG.TOP_BAR);
+        }
+
         // Player HP bar (left)
         UI.drawPipBar(ctx, 5, CONFIG.TOP_BAR + 5, (CONFIG.SIDE_PANEL - 10) / 2,
             CONFIG.FIELD_HEIGHT - 10, this.player.hp, this.player.maxHp,
-            CONFIG.C.HP, CONFIG.C.HP_EMPTY, 'HP', false);
+            CONFIG.C.HP, CONFIG.C.HP_EMPTY, 'HP', false, this.player.trailHp);
 
         // Player Loyalty bar (left, second column)
         UI.drawPipBar(ctx, CONFIG.SIDE_PANEL / 2 + 2, CONFIG.TOP_BAR + 5,
             (CONFIG.SIDE_PANEL - 10) / 2, CONFIG.FIELD_HEIGHT - 10,
             this.player.loyalty, this.player.maxLoyalty,
-            CONFIG.C.LOYALTY, CONFIG.C.LOY_EMPTY, 'LOY', false);
+            CONFIG.C.LOYALTY, CONFIG.C.LOY_EMPTY, 'LOY', false, this.player.trailLoyalty);
 
         // Enemy HP bar (right)
         UI.drawPipBar(ctx, CONFIG.WIDTH - CONFIG.SIDE_PANEL + 5, CONFIG.TOP_BAR + 5,
             (CONFIG.SIDE_PANEL - 10) / 2, CONFIG.FIELD_HEIGHT - 10,
             this.enemy.hp, this.enemy.maxHp,
-            CONFIG.C.HP, CONFIG.C.HP_EMPTY, 'HP', false);
+            CONFIG.C.HP, CONFIG.C.HP_EMPTY, 'HP', false, this.enemy.trailHp);
 
         // Enemy Loyalty bar (right, second column)
         UI.drawPipBar(ctx, CONFIG.WIDTH - CONFIG.SIDE_PANEL / 2 + 2, CONFIG.TOP_BAR + 5,
             (CONFIG.SIDE_PANEL - 10) / 2, CONFIG.FIELD_HEIGHT - 10,
             this.enemy.loyalty, this.enemy.maxLoyalty,
-            CONFIG.C.LOYALTY, CONFIG.C.LOY_EMPTY, 'LOY', false);
+            CONFIG.C.LOYALTY, CONFIG.C.LOY_EMPTY, 'LOY', false, this.enemy.trailLoyalty);
+
+        // Effects (particles, flashes, text) — drawn after bars so popups aren't clipped
+        this.effects.draw(ctx);
 
         // Bottom panel
         ctx.fillStyle = CONFIG.C.PANEL;
@@ -1825,6 +2182,62 @@ class Combat {
         UI.drawTopBar(ctx, this.enemyData);
 
         ctx.restore();
+
+        // Multiplayer rematch overlay
+        if (this.netMode && this._rematchState && this._rematchState !== 'accepted') {
+            ctx.save();
+            ctx.fillStyle = 'rgba(0,0,0,0.75)';
+            ctx.fillRect(0, 0, CONFIG.WIDTH, CONFIG.HEIGHT);
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            const cx = CONFIG.WIDTH / 2;
+            const font = CONFIG.FONT;
+
+            // Result text
+            ctx.fillStyle = this.result === 'win' ? '#ffcc00' : '#ff4444';
+            ctx.font = '800 40px ' + font;
+            ctx.fillText(this.result === 'win' ? 'VICTORY!' : 'DEFEATED', cx, CONFIG.HEIGHT / 2 - 90);
+
+            if (this._rematchState === 'waiting') {
+                ctx.fillStyle = '#99aabb';
+                ctx.font = '400 18px ' + font;
+                const dots = '.'.repeat(1 + Math.floor(Date.now() / 500) % 3);
+                ctx.fillText('Waiting for opponent' + dots, cx, CONFIG.HEIGHT / 2 - 20);
+            } else {
+                // choosing
+                const opts = ['Rematch', 'Quit'];
+                opts.forEach((opt, i) => {
+                    const y = CONFIG.HEIGHT / 2 - 10 + i * 52;
+                    const sel = i === this._rematchSelected;
+                    if (sel) {
+                        ctx.fillStyle = 'rgba(233,69,96,0.15)';
+                        ctx.strokeStyle = CONFIG.C.ACCENT;
+                        ctx.lineWidth = 2;
+                        const bx = cx - 110, by = y - 20, bw = 220, bh = 40, br = 8;
+                        ctx.beginPath();
+                        ctx.moveTo(bx + br, by);
+                        ctx.arcTo(bx + bw, by, bx + bw, by + bh, br);
+                        ctx.arcTo(bx + bw, by + bh, bx, by + bh, br);
+                        ctx.arcTo(bx, by + bh, bx, by, br);
+                        ctx.arcTo(bx, by, bx + bw, by, br);
+                        ctx.closePath();
+                        ctx.fill();
+                        ctx.stroke();
+                    }
+                    ctx.fillStyle = sel ? '#ffffff' : '#667788';
+                    ctx.font = (sel ? '700' : '400') + ' 22px ' + font;
+                    ctx.fillText(opt, cx, y);
+                });
+
+                if (this._remoteWantsRematch) {
+                    ctx.fillStyle = '#44ff88';
+                    ctx.font = '400 13px ' + font;
+                    ctx.fillText('Opponent wants a rematch!', cx, CONFIG.HEIGHT / 2 + 110);
+                }
+            }
+            ctx.restore();
+        }
 
         // Pause menu overlay (drawn outside shake transform)
         if (this.paused) {

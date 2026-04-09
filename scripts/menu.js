@@ -6,10 +6,12 @@ function menuFont(weight, size) {
 }
 
 class MenuScene {
-    constructor(input) {
+    constructor(input, defeated) {
         this.input = input;
         this.selected = 0;
-        this.options = ['Fight', 'Spells', 'Skins', 'Options', 'How to Play', 'Stats'];
+        this.vsUnlocked = !!(defeated && defeated.has('mizu'));
+        // Always show Versus, but grey it out if locked
+        this.options = ['Fight', 'Versus', 'Spells', 'Skins', 'Options', 'How to Play', 'Stats'];
         this.titlePulse = 0;
     }
 
@@ -18,6 +20,7 @@ class MenuScene {
         if (this.input.wasPressed('ArrowUp')) this.selected = (this.selected - 1 + this.options.length) % this.options.length;
         if (this.input.wasPressed('ArrowDown')) this.selected = (this.selected + 1) % this.options.length;
         if (this.input.wasPressed('Enter') || this.input.wasPressed('KeyZ')) {
+            if (this.options[this.selected] === 'Versus' && !this.vsUnlocked) return null;
             return this.options[this.selected];
         }
         return null;
@@ -65,20 +68,36 @@ class MenuScene {
         this.options.forEach((opt, i) => {
             const y = 270 + i * 48;
             const sel = i === this.selected;
+            const locked = opt === 'Versus' && !this.vsUnlocked;
 
             if (sel) {
-                Sprites.roundRect(ctx, CONFIG.WIDTH / 2 - 130, y - 24, 260, 42, 8, 'rgba(233,69,96,0.15)', CONFIG.C.ACCENT);
+                const tint = locked ? 'rgba(100,100,120,0.12)' : 'rgba(233,69,96,0.15)';
+                const border = locked ? '#445' : CONFIG.C.ACCENT;
+                Sprites.roundRect(ctx, CONFIG.WIDTH / 2 - 130, y - 24, 260, 42, 8, tint, border);
                 // Arrow indicator
-                ctx.fillStyle = CONFIG.C.ACCENT;
+                ctx.fillStyle = locked ? '#445' : CONFIG.C.ACCENT;
                 ctx.font = menuFont('700', 20);
                 ctx.textAlign = 'right';
                 ctx.fillText('\u25B6', CONFIG.WIDTH / 2 - 100, y + 2);
             }
 
-            ctx.fillStyle = sel ? '#fff' : '#667788';
-            ctx.font = menuFont(sel ? '700' : '400', sel ? 24 : 20);
-            ctx.textAlign = 'center';
-            ctx.fillText(opt, CONFIG.WIDTH / 2, y + 2);
+            if (locked) {
+                ctx.fillStyle = sel ? '#556' : '#334';
+                ctx.font = menuFont(sel ? '700' : '400', sel ? 24 : 20);
+                ctx.textAlign = 'center';
+                ctx.fillText(opt, CONFIG.WIDTH / 2, y + 2);
+                // Lock icon + warning when selected
+                if (sel) {
+                    ctx.fillStyle = '#556';
+                    ctx.font = menuFont('400', 12);
+                    ctx.fillText('\uD83D\uDD12  Defeat Mizu to unlock', CONFIG.WIDTH / 2, y + 22);
+                }
+            } else {
+                ctx.fillStyle = sel ? '#fff' : '#667788';
+                ctx.font = menuFont(sel ? '700' : '400', sel ? 24 : 20);
+                ctx.textAlign = 'center';
+                ctx.fillText(opt, CONFIG.WIDTH / 2, y + 2);
+            }
         });
 
         // Footer
