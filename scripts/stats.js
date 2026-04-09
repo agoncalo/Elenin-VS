@@ -25,6 +25,17 @@ class PlayerStats {
             dodgedProjectiles: 0,
             laneEffectsPlaced: 0,
             stunsFrozes: 0,
+            endHpRatio: 0,
+            endLoyaltyRatio: 0,
+            enemyProjsFired: 0,
+            projsHitBy: 0,
+            enemyMaxPool: 0,
+            playerProjsFired: 0,
+            playerProjsHit: 0,
+            lanePeakEnemies: [0,0,0,0,0],
+            laneMaxHits: [0,0,0,0,0],
+            globalPeakEnemies: 0,
+            globalMaxHits: 0,
         };
     }
 
@@ -129,6 +140,10 @@ class PlayerStats {
     recordDmgDealt(amount) { this._fight.dmgDealt += amount; }
     recordDmgTaken(amount) { this._fight.dmgTaken += amount; }
     recordDmgBlocked() { this._fight.dmgBlocked++; }
+    recordEnemyProjFired() { this._fight.enemyProjsFired++; }
+    recordProjHitBy() { this._fight.projsHitBy++; }
+    recordPlayerProjFired() { this._fight.playerProjsFired++; }
+    recordPlayerProjHit() { this._fight.playerProjsHit++; }
     recordLaneSwitch(dodged) {
         this._fight.laneSwitches++;
         if (dodged) this._fight.dodgedProjectiles++;
@@ -136,8 +151,27 @@ class PlayerStats {
     recordStunFreeze() { this._fight.stunsFrozes++; }
     recordSummonKill() { this._fight.summonKills++; }
     recordOwnSummonLost() { this._fight.ownSummonsLost++; }
-    recordFightEnd(won) {
+    updateLanePeak(lane, count) {
+        if (count > this._fight.lanePeakEnemies[lane]) this._fight.lanePeakEnemies[lane] = count;
+    }
+    updateGlobalPeak(count) {
+        if (count > this._fight.globalPeakEnemies) this._fight.globalPeakEnemies = count;
+    }
+    recordLaneHits(lane, count) {
+        if (count > this._fight.laneMaxHits[lane]) this._fight.laneMaxHits[lane] = count;
+    }
+    recordGlobalHits(count) {
+        if (count > this._fight.globalMaxHits) this._fight.globalMaxHits = count;
+    }
+    recordFightEnd(won, player, enemy) {
         this._fight.won = won;
+        if (player) {
+            this._fight.endHpRatio = Math.max(0, player.hp / player.maxHp);
+            this._fight.endLoyaltyRatio = Math.max(0, player.loyalty / player.maxLoyalty);
+        }
+        if (enemy) {
+            this._fight.enemyMaxPool = enemy.maxHp + enemy.maxLoyalty;
+        }
         this.data.totalFights++;
         if (won) this.data.wins++; else this.data.losses++;
         // Push fight snapshot into history, trim to max
@@ -183,38 +217,67 @@ class PlayerStats {
     getPlaystyle() {
         const tc = this._sumTypeCast();
         const total = this.totalSpellsCast || 1;
-        const fights = Math.max(1, this._recent().length);
+        const recent = this._recent();
+        const fights = Math.max(1, recent.length);
 
-        // ASSAULT: attack casts ratio. Expected: ~55%
-        const attackCasts = (tc.projectile || 0) + (tc.instant || 0) + (tc.aoe || 0);
-        const assault = Math.min(1, (attackCasts / total) / 0.55);
+        // WRATH: tactical targeting — did you use AOE/lane spells at the right time?
+        // Average of (best hits / peak enemies) per lane + global
+        let wrathNum = 0, wrathDen = 0;
+        for (let i = 0; i < 5; i++) {
+            let peak = 0, best = 0;
+            for (const f of recent) {
+                peak += (f.lanePeakEnemies ? f.lanePeakEnemies[i] : 0);
+                best += (f.laneMaxHits ? f.laneMaxHits[i] : 0);
+            }
+            if (peak > 0) { wrathNum += Math.min(1, best / peak); wrathDen++; }
+        }
+        let gPeak = 0, gBest = 0;
+        for (const f of recent) {
+            gPeak += (f.globalPeakEnemies || 0);
+            gBest += (f.globalMaxHits || 0);
+        }
+        if (gPeak > 0) { wrathNum += Math.min(1, gBest / gPeak); wrathDen++; }
+        const wrath = wrathDen > 0 ? wrathNum / wrathDen : 0;
 
-        // DEFENSE: defensive casts ratio. Expected: ~10%
-        const defense = Math.min(1, ((tc.defensive || 0) / total) / 0.10);
+        // DEFENSE: how much of your own life and loyalty you preserved at fight's end
+        let hpSum = 0, loySum = 0;
+        for (const f of recent) {
+            hpSum += (f.endHpRatio || 0);
+            loySum += (f.endLoyaltyRatio || 0);
+        }
+        const defense = (hpSum + loySum) / (fights * 2);
 
-        // EVASION: lane switches per fight + dodge rate
-        const switchesPerFight = this._sum('laneSwitches') / fights;
-        const totalSwitches = this._sum('laneSwitches') || 1;
-        const dodgeBonus = this._sum('dodgedProjectiles') / totalSwitches;
-        const evasion = Math.min(1, (switchesPerFight / 15) * 0.7 + dodgeBonus * 0.3);
+        // EVASION: how many enemy projectiles you avoided — 1 minus your hit rate
+        const enemyProjs = this._sum('enemyProjsFired');
+        const hitBy = this._sum('projsHitBy');
+        const evasion = enemyProjs > 0 ? 1 - (hitBy / enemyProjs) : 0;
 
-        // CONTROL: lane/enchant casts + stuns per fight
-        const controlCasts = (tc.lane || 0) + (tc.enchant || 0);
-        const stunsPerFight = this._sum('stunsFrozes') / fights;
-        const control = Math.min(1, ((controlCasts / total) / 0.12) * 0.5 + (stunsPerFight / 3) * 0.5);
+        // HARMONY: how much of your kit you use vs repeating the same opener
+        // unique 2-letter prefixes / totalCasts averaged across recent fights
+        let harmonySum = 0;
+        for (const f of recent) {
+            const sc = f.spellsCast || {};
+            const prefixes = new Set();
+            let castTotal = 0;
+            for (const [key, count] of Object.entries(sc)) {
+                prefixes.add(key.slice(0, 2));
+                castTotal += count;
+            }
+            if (castTotal > 0) harmonySum += prefixes.size / castTotal;
+        }
+        const harmony = harmonySum / fights;
 
-        // SUMMONER: summon casts ratio. Expected: ~15%
-        const summoner = Math.min(1, ((tc.summon || 0) / total) / 0.15);
+        // SUMMON: the army exchange — of all summons felled on both sides, how many were theirs?
+        const kills = this._sum('summonKills');
+        const lost = this._sum('ownSummonsLost');
+        const summon = (kills + lost) > 0 ? kills / (kills + lost) : 0;
 
-        // RESILIENCE: survival efficiency
-        const dmgPerFight = this._sum('dmgTaken') / fights;
-        const blocksPerFight = this._sum('dmgBlocked') / fights;
-        const resilience = Math.min(1,
-            (1 - Math.min(1, dmgPerFight / 25)) * 0.6 +
-            Math.min(1, blocksPerFight / 5) * 0.4
-        );
+        // FOCUS: accuracy — how many of your projectiles actually hit
+        const playerFired = this._sum('playerProjsFired');
+        const playerHit = this._sum('playerProjsHit');
+        const focus = playerFired > 0 ? Math.min(1, playerHit / playerFired) : 0;
 
-        return { assault, defense, evasion, control, summoner, resilience };
+        return { wrath, defense, evasion, harmony, summon, focus };
     }
 
     reset() {

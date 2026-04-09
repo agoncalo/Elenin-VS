@@ -118,8 +118,14 @@ class EnemyAI {
     // ----- Lane decisions -----
     _decideLane(combat) {
         const f = this.fighter;
+        const player = combat.player;
         const dominated = this._laneHasThreats(combat, f.lane);
         const laneHazard = this._laneHasHazard(combat, f.lane);
+
+        // Posture check for trade willingness
+        const ourStr = (f.hp / f.maxHp + f.loyalty / f.maxLoyalty) / 2;
+        const plrStr = (player.hp / player.maxHp + player.loyalty / player.maxLoyalty) / 2;
+        const onAdvantage = (ourStr - plrStr) > 0.12;
 
         // Trap intent: aggressively match player lane to set up lane hazards
         if (this.trapIntent && this.difficulty >= 3) {
@@ -164,7 +170,8 @@ class EnemyAI {
             return;
         }
 
-        if (dominated && Math.random() < this.dodgeChance + 0.2) {
+        if (dominated && Math.random() < this.dodgeChance + (onAdvantage ? 0 : 0.2)) {
+            // On advantage: less likely to dodge — willing to trade hits
             const safeLane = this._findSafeLane(combat, f.lane);
             if (safeLane > f.lane) f.switchLane(1);
             else if (safeLane < f.lane) f.switchLane(-1);
@@ -173,6 +180,13 @@ class EnemyAI {
             const targetLane = this._bestSummonLane(combat);
             if (f.lane < targetLane) f.switchLane(1);
             else if (f.lane > targetLane) f.switchLane(-1);
+        } else if (this.tactical && Math.random() < 0.35) {
+            // Lane-aware positioning: move toward best lane for next action
+            const targetLane = this._bestLaneForAction(combat);
+            if (targetLane !== null && targetLane !== f.lane) {
+                if (targetLane > f.lane) f.switchLane(1);
+                else f.switchLane(-1);
+            }
         } else if (Math.random() < 0.35 * this.aiSpeed) {
             // Aggressive: match player lane
             const playerLane = combat.player.lane;
@@ -247,6 +261,75 @@ class EnemyAI {
             if (val > bestVal) { bestVal = val; best = s; }
         }
         return best ? best.lane : null;
+    }
+
+    // Pick the best lane based on what spells are nearly ready
+    _bestLaneForAction(combat) {
+        const f = this.fighter;
+        const player = combat.player;
+        const available = this.spells.filter(key => f.canCast(key));
+        const hasSummon = available.some(k => SPELL_DATA[k]?.type === 'summon');
+        const hasLane = available.some(k => SPELL_DATA[k]?.type === 'lane');
+        const hasPierce = available.some(k => SPELL_DATA[k]?.stats?.pierce);
+
+        // Posture
+        const ourStr = (f.hp / f.maxHp + f.loyalty / f.maxLoyalty) / 2;
+        const plrStr = (player.hp / player.maxHp + player.loyalty / player.maxLoyalty) / 2;
+        const posture = ourStr - plrStr;
+
+        // Count entities per lane
+        const playerPop = [0,0,0,0,0];
+        const aiPop = [0,0,0,0,0];
+        playerPop[player.lane]++;
+        combat.summons.forEach(s => {
+            if (!s.alive) return;
+            const lanes = s.getLanes();
+            if (s.owner === 'player') lanes.forEach(l => { playerPop[l]++; });
+            else lanes.forEach(l => { aiPop[l]++; });
+        });
+
+        // For lane effects or piercing: prefer the most populated lane
+        if (hasLane || hasPierce) {
+            let bestLane = f.lane, bestPop = playerPop[f.lane];
+            for (let i = 0; i < 5; i++) {
+                if (playerPop[i] > bestPop) { bestPop = playerPop[i]; bestLane = i; }
+            }
+            if (bestPop >= 2) return bestLane;
+        }
+
+        // For summons: posture-dependent lane choice
+        if (hasSummon) {
+            if (posture > 0.12) {
+                // Advantage: summon in lanes player left undefended (offensive)
+                for (let offset = 0; offset <= 2; offset++) {
+                    for (const dir of [0, -1, 1]) {
+                        const lane = f.lane + dir * offset;
+                        if (lane < 0 || lane >= CONFIG.LANE_COUNT) continue;
+                        if (playerPop[lane] === 0) return lane;
+                    }
+                }
+            } else if (posture < -0.12) {
+                // Disadvantage: summon in lanes WE left undefended (defensive)
+                for (let offset = 0; offset <= 2; offset++) {
+                    for (const dir of [0, -1, 1]) {
+                        const lane = f.lane + dir * offset;
+                        if (lane < 0 || lane >= CONFIG.LANE_COUNT) continue;
+                        if (aiPop[lane] === 0) return lane;
+                    }
+                }
+            } else {
+                // Neutral: prefer undefended by player
+                for (let offset = 0; offset <= 2; offset++) {
+                    for (const dir of [0, -1, 1]) {
+                        const lane = f.lane + dir * offset;
+                        if (lane < 0 || lane >= CONFIG.LANE_COUNT) continue;
+                        if (playerPop[lane] === 0) return lane;
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 
     _castSpell(combat) {
@@ -403,12 +486,30 @@ class EnemyAI {
         const player = combat.player;
         const hpPct = f.hp / f.maxHp;
         const loyPct = f.loyalty / f.maxLoyalty;
+        const playerHpPct = player.hp / player.maxHp;
         const playerLoyPct = player.loyalty / player.maxLoyalty;
 
         // Resource posture flags
         const loyaltyThreatened = loyPct < 0.4;          // our loyalty is low
         const hpThreatened = hpPct < 0.35;               // our HP is low
         const playerLoyaltyWeak = playerLoyPct < 0.35;   // player loyalty is exploitable
+
+        // Overall posture: positive = we're winning, negative = we're losing
+        const ourStrength = (hpPct + loyPct) / 2;
+        const playerStrength = (playerHpPct + playerLoyPct) / 2;
+        const posture = ourStrength - playerStrength; // -1..+1
+        const onAdvantage = posture > 0.12;
+        const onDisadvantage = posture < -0.12;
+
+        // Per-lane info for posture-aware decisions
+        const playerPerLane = [0,0,0,0,0];
+        const aiPerLane = [0,0,0,0,0];
+        combat.summons.forEach(s => {
+            if (!s.alive) return;
+            const lanes = s.getLanes();
+            if (s.owner === 'player') lanes.forEach(l => { playerPerLane[l]++; });
+            else lanes.forEach(l => { aiPerLane[l]++; });
+        });
 
         const scored = available.map(key => {
             const spell = SPELL_DATA[key];
@@ -485,18 +586,37 @@ class EnemyAI {
                 // Counter player summons with our own
                 const playerSummonCount = combat.summons.filter(s => s.alive && s.owner === 'player').length;
                 if (playerSummonCount > ownSummons) score += 2;
+                // Prefer undefended lanes — posture-aware
+                const playerBlockersInLane = playerPerLane[f.lane];
+                const aiBlockersInLane = aiPerLane[f.lane];
+                if (onAdvantage) {
+                    // Aggressive: summon in lanes the PLAYER left undefended
+                    if (playerBlockersInLane === 0) score += 3.5;
+                    else score -= 0.5;
+                } else if (onDisadvantage) {
+                    // Defensive: summon in lanes WE left undefended (cover backline)
+                    if (aiBlockersInLane === 0) score += 3;
+                    // Extra value for blockers when we're behind
+                    if (stats.hp >= 8 || stats.deflectChance) score += 1.5;
+                } else {
+                    // Neutral: prefer undefended by player
+                    if (playerBlockersInLane === 0) score += 2.5;
+                    else score -= playerBlockersInLane;
+                }
             }
 
             // Prefer lane effects — much more when in player's lane
             const playerSummons = combat.summons.filter(s => s.alive && s.owner === 'player').length;
             if (type === 'lane') {
                 const inPlayerLane = f.lane === player.lane;
-                if (inPlayerLane) {
-                    score += 4; // great opportunity — cast right under them
-                    if (playerSummons > 0) score += 1.5;
-                } else if (playerSummons > 0) {
-                    score += 2;
-                }
+                // Count player entities in our lane (player + summons)
+                let lanePopulation = (player.lane === f.lane) ? 1 : 0;
+                lanePopulation += combat.summons.filter(s =>
+                    s.alive && s.owner === 'player' && s.getLanes().includes(f.lane)).length;
+                if (lanePopulation >= 3) score += 5;
+                else if (lanePopulation >= 2) score += 3.5;
+                else if (inPlayerLane) score += 4;
+                else if (playerSummons > 0) score += 2;
                 if (this.difficulty >= 5) score += 1;
                 // Lane effect in a lane with player summons = burn them out
                 const summonInOurLane = combat.summons.some(s =>
@@ -518,9 +638,14 @@ class EnemyAI {
 
             // Slash/projectile in lane with player summons
             if ((type === 'attack' || type === 'projectile') && stats.dmg) {
-                const summonInLane = combat.summons.some(s =>
+                const summonsInLane = combat.summons.filter(s =>
                     s.alive && s.owner === 'player' && s.getLanes().includes(f.lane));
-                if (summonInLane) score += 2;
+                if (summonsInLane.length > 0) score += 2;
+                // Piercing projectiles benefit more from populated lanes
+                if (stats.pierce && summonsInLane.length >= 1) {
+                    const laneTargets = (player.lane === f.lane ? 1 : 0) + summonsInLane.length;
+                    score += laneTargets * 1.5; // more targets = more value
+                }
             }
 
             // Stun/freeze spells are very valuable when player is unshielded
@@ -540,6 +665,26 @@ class EnemyAI {
                 if (!summonBlocker) score += 3; // guaranteed backline hit
                 else score += 0.5; // might hit summon at least
             }
+
+            // === POSTURE-AWARE AGGRESSION ===
+            if (onAdvantage) {
+                // More willing to trade — boost all damage, de-prioritize defense
+                if (stats.dmg) score += 1.5;
+                if (type === 'projectile' || type === 'instant') score += 1;
+                if (type === 'aoe') score += 1.5;
+                if (type === 'defensive' && !this._laneHasHazard(combat, f.lane)) score -= 1.5;
+                // Push backline damage when winning
+                if (type === 'projectile' && f.lane !== player.lane) score += 1;
+            }
+            if (onDisadvantage) {
+                // Play cautious — boost defensive, reduce reckless aggression
+                if (type === 'defensive') score += 2;
+                if (type === 'summon') score += 1; // bodies to block with
+                if (stats.healAmt) score += 2;
+                // Less value on trades that cost us more
+                if (type === 'lane' && f.lane !== player.lane) score -= 1;
+            }
+            // === END POSTURE ===
 
             // Prefer attacks when player is low
             if (stats.dmg && player.hp < player.maxHp * 0.4) {

@@ -699,6 +699,45 @@ const Sprites = {
             ctx.restore();
         }
 
+        // POISONED: toxic bubbles + green tint
+        if (status.poisoned) {
+            ctx.save();
+            // Green tint
+            ctx.globalAlpha = 0.12;
+            ctx.fillStyle = '#44cc44';
+            ctx.fillRect(cx - hs, cy - hs, size, size);
+
+            // Rising toxic bubbles
+            for (let i = 0; i < 5; i++) {
+                const bx = cx - hs * 0.6 + (i / 4) * size * 0.6;
+                const speed = 0.04 + i * 0.01;
+                const by = cy + hs - ((t * speed + i * 40) % (size + 10));
+                const br = 2 + Math.sin(t / 120 + i * 1.7) * 1;
+                ctx.globalAlpha = 0.5 - (cy + hs - by) / (size + 10) * 0.4;
+                ctx.fillStyle = i % 2 === 0 ? '#66dd66' : '#33aa55';
+                ctx.beginPath();
+                ctx.arc(bx, by, br, 0, Math.PI * 2);
+                ctx.fill();
+                // Bubble highlight
+                ctx.fillStyle = 'rgba(200,255,200,0.4)';
+                ctx.beginPath();
+                ctx.arc(bx - br * 0.3, by - br * 0.3, br * 0.35, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Drip particles from bottom
+            for (let i = 0; i < 3; i++) {
+                const dx = cx + Math.sin(t / 180 + i * 2.5) * hs * 0.5;
+                const dy = cy + hs + 2 + Math.sin(t / 130 + i) * 3;
+                ctx.fillStyle = '#44bb44';
+                ctx.globalAlpha = 0.4 + Math.sin(t / 90 + i * 3) * 0.2;
+                ctx.beginPath();
+                ctx.arc(dx, dy, 1.5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.restore();
+        }
+
         // STUNNED: electric sparks + yellow tint + stars
         if (status.stunned) {
             ctx.save();

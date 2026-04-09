@@ -29,6 +29,7 @@ const AudioEngine = (() => {
         sfxGain.connect(masterGain);
 
         _initialized = true;
+        _loadSavedVolumes();
     }
 
     function resume() {
@@ -723,6 +724,25 @@ const AudioEngine = (() => {
         if (sfx[name]) sfx[name]();
     }
 
+    function getMusicVolume() { return musicGain ? musicGain.gain.value : 0.35; }
+    function setMusicVolume(v) {
+        v = Math.max(0, Math.min(1, v));
+        if (musicGain) musicGain.gain.value = v;
+        localStorage.setItem('eleninVS_musicVol', v);
+    }
+    function getSfxVolume() { return sfxGain ? sfxGain.gain.value : 0.5; }
+    function setSfxVolume(v) {
+        v = Math.max(0, Math.min(1, v));
+        if (sfxGain) sfxGain.gain.value = v;
+        localStorage.setItem('eleninVS_sfxVol', v);
+    }
+    function _loadSavedVolumes() {
+        const mv = localStorage.getItem('eleninVS_musicVol');
+        const sv = localStorage.getItem('eleninVS_sfxVol');
+        if (mv !== null && musicGain) musicGain.gain.value = parseFloat(mv);
+        if (sv !== null && sfxGain) sfxGain.gain.value = parseFloat(sv);
+    }
+
     return {
         init,
         resume,
@@ -731,5 +751,10 @@ const AudioEngine = (() => {
         playMusic,
         stopMusic,
         playSfx,
+        getMusicVolume,
+        setMusicVolume,
+        getSfxVolume,
+        setSfxVolume,
+        _loadSavedVolumes,
     };
 })();

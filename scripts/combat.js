@@ -43,6 +43,11 @@ class Combat {
         this.castHistory = [];
         this.enemyCastHistory = [];
 
+        // Tutorial overlay
+        this.showTutorial = !localStorage.getItem('eleninVS_tutorialSeen');
+        this.tutorialCasted = false;
+        this.tutorialDelay = this.showTutorial ? 1000 : 0;
+
         // Windup / telegraph system
         this.windups = [];
         // Lingering kanji floaters after windups
@@ -77,6 +82,11 @@ class Combat {
 
     _onPlayerCast(comboKey) {
         if (this.result) return;
+        // Tutorial: block casting during delay, then mark first cast
+        if (this.showTutorial) {
+            if (this.tutorialDelay > 0) return;
+            if (!this.tutorialCasted) this.tutorialCasted = true;
+        }
         const spell = SPELL_DATA[comboKey];
         if (!spell) return;
         if (!this.player.canCast(comboKey)) {
@@ -125,6 +135,8 @@ class Combat {
         );
         this.projectiles.push(proj);
         caster.spellOnScreen[comboKey] = true;
+        if (caster.owner === 'enemy' && this.stats) this.stats.recordEnemyProjFired();
+        if (caster.owner === 'player' && this.stats) this.stats.recordPlayerProjFired();
     }
 
     _instantAttack(comboKey, caster, stats) {
@@ -860,6 +872,11 @@ class Combat {
             else if (died === 'regrow') this._onHydraRegrow(s);
         });
 
+        // Record global AOE hits for Wrath stat
+        if (isPlayer && this.stats) {
+            this.stats.recordGlobalHits(1 + enemySummons.length);
+        }
+
         // Apply status based on type (reduced by element resist)
         if (stats.burnDmg && stats.burnDur) {
             const dur = stats.burnDur * this._elementResist(target, 'fire');
@@ -1005,6 +1022,16 @@ class Combat {
     }
 
     update(dt) {
+        // Tutorial overlay: freeze combat until player casts their first spell
+        if (this.showTutorial) {
+            if (this.tutorialDelay > 0) this.tutorialDelay -= dt;
+            if (this.tutorialCasted) {
+                this.showTutorial = false;
+                localStorage.setItem('eleninVS_tutorialSeen', '1');
+            }
+            return null;
+        }
+
         if (this.result) {
             this.resultTimer -= dt;
             return this.resultTimer <= 0 ? this.result : null;
@@ -1058,8 +1085,8 @@ class Combat {
                 const sameKey = this.projectiles.filter(p => p.alive && p.comboKey === proj.comboKey && p.owner === proj.owner);
                 if (sameKey.length <= 0) delete owner.spellOnScreen[proj.comboKey];
 
-                // Backline loyalty penalty: unblocked projectile reached the far wall
-                if (!proj.hitSomething && !proj.isStatic && proj.charged) {
+                // Backline loyalty penalty: unblocked summon projectile reached the far wall
+                if (!proj.hitSomething && !proj.isStatic && proj.charged && proj.fromSummon) {
                     const hitBackline = (proj.dirX > 0 && proj.x >= CONFIG.FIELD_RIGHT - 10)
                                      || (proj.dirX < 0 && proj.x <= CONFIG.FIELD_LEFT + 10);
                     if (hitBackline) {
@@ -1090,6 +1117,23 @@ class Combat {
             if (s.canHeal()) this._summonHeal(s);
         });
         this.summons = this.summons.filter(s => s.alive);
+
+        // Snapshot per-lane enemy counts for Wrath stat
+        if (this.stats) {
+            const laneCounts = [0,0,0,0,0];
+            laneCounts[this.enemy.lane]++;
+            const enemySummons = this.summons.filter(s => s.owner === 'enemy');
+            enemySummons.forEach(s => {
+                s.getLanes().forEach(l => { laneCounts[l]++; });
+            });
+            let total = 0;
+            for (let i = 0; i < 5; i++) {
+                this.stats.updateLanePeak(i, laneCounts[i]);
+                total += laneCounts[i];
+            }
+            // Global counts enemy fighter once (not per-lane)
+            this.stats.updateGlobalPeak(1 + enemySummons.length);
+        }
 
         // Update lane effects
         this.laneEffects.forEach(le => {
@@ -1155,14 +1199,14 @@ class Combat {
             this.resultTimer = 2000;
             this.effects.shake(500, 10);
             this.effects.statusText(CONFIG.WIDTH / 2, CONFIG.HEIGHT / 2, 'VICTORY!', '#ffcc00');
-            if (this.stats) this.stats.recordFightEnd(true);
+            if (this.stats) this.stats.recordFightEnd(true, this.player, this.enemy);
         } else if (this.player.hp <= 0 || this.player.loyalty <= 0) {
             this.result = 'lose';
             this.resultTimer = 2000;
             this.effects.shake(500, 8);
             const reason = this.player.hp <= 0 ? 'DEFEATED' : 'LOYALTY BROKEN';
             this.effects.statusText(CONFIG.WIDTH / 2, CONFIG.HEIGHT / 2, reason, '#ff4444');
-            if (this.stats) this.stats.recordFightEnd(false);
+            if (this.stats) this.stats.recordFightEnd(false, this.player, this.enemy);
         }
 
         return null;
@@ -1282,6 +1326,10 @@ class Combat {
             const spell = SPELL_DATA[proj.comboKey];
             const dmg = this._calcDamage(proj.dmg, isPlayerProj ? this.player : this.enemy, target, spell);
             target.takeDamage(dmg, this.effects, isPlayerProj ? this.player : this.enemy);
+            if (!proj.hitSomething && this.stats) {
+                if (!isPlayerProj) this.stats.recordProjHitBy();
+                if (isPlayerProj) this.stats.recordPlayerProjHit();
+            }
             proj.hitSomething = true;
             AudioEngine.playSfx('hit');
 
@@ -1310,9 +1358,9 @@ class Combat {
             }
             if (proj.stats.poisonDmg) {
                 const dur = (proj.stats.poisonDur || 3000) * this._elementResist(target, 'poison');
-                target.burnTimer = dur;
-                target.burnDmg = proj.stats.poisonDmg;
-                target.burnTick = 500;
+                target.poisonTimer = dur;
+                target.poisonDmg = proj.stats.poisonDmg;
+                target.poisonTick = 500;
                 this.effects.statusText(target.cx, target.y - 15, 'POISONED', CONFIG.C.POISON);
             }
 
@@ -1342,9 +1390,9 @@ class Combat {
                 else if (died === 'regrow') this._onHydraRegrow(s);
                 proj.hitSomething = true;
                 if (proj.stats.poisonDmg) {
-                    s.burnTimer = proj.stats.poisonDur || 3000;
-                    s.burnDmg = proj.stats.poisonDmg;
-                    s.burnTick = 500;
+                    s.poisonTimer = proj.stats.poisonDur || 3000;
+                    s.poisonDmg = proj.stats.poisonDmg;
+                    s.poisonTick = 500;
                 }
 
                 if (!proj.isStatic && !proj.isPiercing) proj.alive = false;
@@ -1375,19 +1423,29 @@ class Combat {
                 const enemyProj = aIsPlayer ? b : a;
 
                 // Only main-cast projectiles destroy summon projectiles
+                const playerIsSummonProj = playerProj.fromSummon;
                 const enemyIsSummonProj = enemyProj.fromSummon;
 
                 const cx = (a.cx + b.cx) / 2;
                 const cy = (a.cy + b.cy) / 2;
 
-                if (enemyIsSummonProj) {
-                    // Player projectile destroys summon projectile
+                if (enemyIsSummonProj && !playerIsSummonProj) {
+                    // Player main projectile destroys enemy summon projectile
                     enemyProj.alive = false;
                     enemyProj.hitSomething = true;
-                    // Small burst at collision point
                     this.effects.burst(cx, cy, '#ffaa44', 5, 3, 200, 3);
                     this.effects.statusText(cx, cy - 15, 'BLOCKED', '#ffcc66');
                     AudioEngine.playSfx('hit');
+                } else if (playerIsSummonProj && !enemyIsSummonProj) {
+                    // Enemy main projectile destroys player summon projectile
+                    playerProj.alive = false;
+                    playerProj.hitSomething = true;
+                    this.effects.burst(cx, cy, '#ffaa44', 5, 3, 200, 3);
+                    this.effects.statusText(cx, cy - 15, 'BLOCKED', '#ffcc66');
+                    AudioEngine.playSfx('hit');
+                } else if (playerIsSummonProj && enemyIsSummonProj) {
+                    // Both summon — already filtered above, but safety pass-through
+                    continue;
                 } else {
                     // Two main projectiles cancel each other — fancy clash effect
                     a.alive = false;
@@ -1454,6 +1512,7 @@ class Combat {
             proj.charged = true;
             proj.fromSummon = true;
             this.projectiles.push(proj);
+            if (!isPlayer && this.stats) this.stats.recordEnemyProjFired();
         }
     }
 
@@ -1480,6 +1539,7 @@ class Combat {
         // Determine who gets hit
         const target = isPlayerOwned ? this.enemy : this.player;
         const targetSummons = this.summons.filter(s => s.owner !== le.owner);
+        let laneHits = 0;
 
         // Hit main target if in this lane and on affected side
         if (target.lane === le.lane) {
@@ -1487,6 +1547,7 @@ class Combat {
                 ? target.cx > CONFIG.MIDPOINT
                 : target.cx < CONFIG.MIDPOINT;
             if (inSide) {
+                laneHits++;
                 if (le.type === 'burn' && le.stats.dmg) {
                     const resist = this._elementResist(target, 'fire');
                     target.takeDamage(Math.max(1, Math.ceil(le.stats.dmg * resist)), this.effects, null);
@@ -1505,6 +1566,7 @@ class Combat {
                 ? s.cx > CONFIG.MIDPOINT
                 : s.cx < CONFIG.MIDPOINT;
             if (!inSide) return;
+            laneHits++;
 
             if (le.type === 'burn' && le.stats.dmg) {
                 const died = s.takeDamage(le.stats.dmg, this.effects);
@@ -1515,6 +1577,11 @@ class Combat {
                 s.freezeTimer = Math.max(s.freezeTimer, le.stats.freezeDur);
             }
         });
+
+        // Record lane hits for Wrath stat
+        if (isPlayerOwned && this.stats && laneHits > 0) {
+            this.stats.recordLaneHits(le.lane, laneHits);
+        }
     }
 
     draw(ctx) {
@@ -1693,6 +1760,11 @@ class Combat {
         // Effects (particles, flashes, text)
         this.effects.draw(ctx);
 
+        // Tutorial overlay — drawn UNDER UI so bars/orbs/history are visible on top
+        if (this.showTutorial) {
+            this._drawTutorial(ctx);
+        }
+
         // --- UI ---
         // Side panels background
         ctx.fillStyle = CONFIG.C.PANEL;
@@ -1744,10 +1816,10 @@ class Combat {
         UI.drawCooldowns(ctx, this.player, 'left');
 
         // Cast history (player on left, enemy on right)
-        UI.drawHistory(ctx, this.castHistory, 'left');
+        UI.drawHistory(ctx, this.castHistory, 'left', this.player);
 
         // Enemy cast history
-        UI.drawHistory(ctx, this.enemyCastHistory, 'right');
+        UI.drawHistory(ctx, this.enemyCastHistory, 'right', this.enemy);
 
         // Top bar
         UI.drawTopBar(ctx, this.enemyData);
@@ -1796,6 +1868,98 @@ class Combat {
             ctx.fillText('Press ESC to resume', CONFIG.WIDTH / 2, CONFIG.HEIGHT / 2 + 140);
             ctx.restore();
         }
+    }
+
+    _drawTutorial(ctx) {
+        ctx.save();
+        const font = CONFIG.FONT;
+        const fl = CONFIG.FIELD_LEFT;
+        const fr = CONFIG.FIELD_RIGHT;
+        const ft = CONFIG.FIELD_TOP;
+        const fb = CONFIG.FIELD_BOTTOM;
+        const fw = CONFIG.FIELD_WIDTH;
+        const fh = CONFIG.FIELD_HEIGHT;
+        const cx = fl + fw / 2;
+        const cy = ft + fh / 2;
+
+        // Dim the battlefield area
+        ctx.fillStyle = 'rgba(0,0,0,0.72)';
+        ctx.fillRect(fl, ft, fw, fh);
+
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        // --- Controls at center ---
+        let y = cy - 80;
+        ctx.fillStyle = '#ffcc44';
+        ctx.font = '700 18px ' + font;
+        ctx.fillText('CONTROLS', cx, y);
+        y += 30;
+
+        const controls = [
+            ['\u2190 \u2192', 'Move'],
+            ['\u2191 \u2193', 'Switch lanes'],
+            ['Z  X  C', 'Cast spells (3 keys = 1 spell)'],
+        ];
+        controls.forEach(([key, desc]) => {
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '700 14px ' + font;
+            ctx.textAlign = 'right';
+            ctx.fillText(key, cx - 12, y);
+            ctx.fillStyle = '#99aabb';
+            ctx.font = '400 14px ' + font;
+            ctx.textAlign = 'left';
+            ctx.fillText(desc, cx + 12, y);
+            y += 24;
+        });
+
+        // --- Bar highlight annotations ---
+        ctx.textAlign = 'left';
+        ctx.font = '700 13px ' + font;
+        // Player side: arrow pointing left toward bars
+        const barLabelX = fl + 10;
+        ctx.fillStyle = CONFIG.C.HP;
+        ctx.fillText('\u2190 HP', barLabelX, ft + 30);
+        ctx.fillStyle = '#99aabb';
+        ctx.font = '400 11px ' + font;
+        ctx.fillText('Hit by attacks', barLabelX, ft + 46);
+
+        ctx.font = '700 13px ' + font;
+        ctx.fillStyle = CONFIG.C.LOYALTY;
+        ctx.fillText('\u2190 Loyalty', barLabelX, ft + 72);
+        ctx.fillStyle = '#99aabb';
+        ctx.font = '400 11px ' + font;
+        ctx.fillText('Summons killed or', barLabelX, ft + 88);
+        ctx.fillText('unblocked summon shots', barLabelX, ft + 102);
+
+        // Enemy side: arrow pointing right toward bars
+        ctx.textAlign = 'right';
+        const barRightX = fr - 10;
+        ctx.font = '700 13px ' + font;
+        ctx.fillStyle = CONFIG.C.HP;
+        ctx.fillText('HP \u2192', barRightX, ft + 30);
+        ctx.fillStyle = '#99aabb';
+        ctx.font = '400 11px ' + font;
+        ctx.fillText('Hit the ninja!', barRightX, ft + 46);
+
+        ctx.font = '700 13px ' + font;
+        ctx.fillStyle = CONFIG.C.LOYALTY;
+        ctx.fillText('Loyalty \u2192', barRightX, ft + 72);
+        ctx.fillStyle = '#99aabb';
+        ctx.font = '400 11px ' + font;
+        ctx.fillText('Kill their summons', barRightX, ft + 88);
+        ctx.fillText('Let summon projectiles through', barRightX, ft + 102);
+
+        // --- Cast prompt ---
+        ctx.textAlign = 'center';
+        const pulse = 0.6 + 0.4 * Math.sin(Date.now() / 400);
+        ctx.globalAlpha = pulse;
+        ctx.fillStyle = CONFIG.C.ACCENT;
+        ctx.font = '700 16px ' + font;
+        ctx.fillText('Cast a spell to begin  (Z, X, or C \u00D7 3)', cx, fb - 30);
+        ctx.globalAlpha = 1;
+
+        ctx.restore();
     }
 
     // ===== BATTLEFIELD SCENERY =====

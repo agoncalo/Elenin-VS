@@ -21,6 +21,7 @@
     let state = 'menu';        // menu | spells | skins | howtoplay | stats | enemySelect | combat | defeat
     let scene = new MenuScene(input);
     let currentEnemy = null;
+    let lastSelectedEnemy = 0;  // index of last selected enemy in select screen
     let combat = null;
     let lastTime = performance.now();
 
@@ -54,8 +55,11 @@
             case 'stats':
                 scene = new StatsScene(input, playerStats);
                 break;
+            case 'options':
+                scene = new OptionsScene(input);
+                break;
             case 'enemySelect':
-                scene = new EnemySelectScene(input, defeated);
+                scene = new EnemySelectScene(input, defeated, data != null ? data : lastSelectedEnemy);
                 break;
             case 'combat':
                 currentEnemy = data;
@@ -93,6 +97,7 @@
                 if (result === 'Fight') setState('enemySelect');
                 else if (result === 'Spells') setState('spells');
                 else if (result === 'Skins') setState('skins');
+                else if (result === 'Options') setState('options');
                 else if (result === 'How to Play') setState('howtoplay');
                 else if (result === 'Stats') setState('stats');
                 break;
@@ -121,10 +126,18 @@
                 if (result === 'back') setState('menu');
                 break;
 
-            case 'enemySelect':
+            case 'options':
                 result = scene.update(dt);
                 if (result === 'back') setState('menu');
-                else if (result && result.action === 'start') {
+                break;
+
+            case 'enemySelect':
+                result = scene.update(dt);
+                if (result === 'back') {
+                    lastSelectedEnemy = scene.selected;
+                    setState('menu');
+                } else if (result && result.action === 'start') {
+                    lastSelectedEnemy = scene.selected;
                     setState('combat', result.enemy);
                 }
                 break;
@@ -154,7 +167,14 @@
                         saveDefeated();
                         AudioEngine.stopMusic();
                         AudioEngine.playSfx('victory');
-                        setState('enemySelect');
+                        // Select newly unlocked enemy, or stay on current
+                        const curIdx = ENEMIES.findIndex(e => e.id === currentEnemy.id);
+                        const nextIdx = curIdx + 1;
+                        if (nextIdx < ENEMIES.length && !defeated.has(ENEMIES[nextIdx].id)) {
+                            setState('enemySelect', nextIdx);
+                        } else {
+                            setState('enemySelect', curIdx);
+                        }
                     } else if (result === 'lose') {
                         setState('defeat');
                     }

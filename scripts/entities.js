@@ -14,6 +14,9 @@ class Entity {
         this.burnTimer = 0;
         this.burnDmg = 0;
         this.burnTick = 0;
+        this.poisonTimer = 0;
+        this.poisonDmg = 0;
+        this.poisonTick = 0;
     }
     get y() {
         return CONFIG.FIELD_TOP + this.lane * CONFIG.LANE_HEIGHT + CONFIG.LANE_HEIGHT / 2 - CONFIG.SPRITE / 2;
@@ -70,6 +73,17 @@ class Fighter extends Entity {
             if (this.burnTick <= 0) {
                 this.burnTick = 500;
                 this.hp -= this.burnDmg;
+                if (this.hp <= 0) this.hp = 0;
+            }
+        }
+
+        // Poison DoT
+        if (this.poisonTimer > 0) {
+            this.poisonTimer -= dt;
+            this.poisonTick -= dt;
+            if (this.poisonTick <= 0) {
+                this.poisonTick = 500;
+                this.hp -= this.poisonDmg;
                 if (this.hp <= 0) this.hp = 0;
             }
         }
@@ -180,6 +194,7 @@ class Fighter extends Entity {
         const cy = drawY + CONFIG.SPRITE / 2;
         Sprites.statusOverlays(ctx, cx, cy, CONFIG.SPRITE, {
             burning: this.burnTimer > 0,
+            poisoned: this.poisonTimer > 0,
             frozen: this.freezeTimer > 0,
             stunned: this.stunTimer > 0,
         });
@@ -256,14 +271,18 @@ class Projectile extends Entity {
         ctx.strokeStyle = '#aa7744';
         ctx.lineWidth = 2.5;
         ctx.beginPath();
-        ctx.arc(bx + dir * 4, by, bowH, -Math.PI * 0.45, Math.PI * 0.45);
+        if (dir > 0) {
+            ctx.arc(bx + dir * 4, by, bowH, -Math.PI * 0.45, Math.PI * 0.45);
+        } else {
+            ctx.arc(bx + dir * 4, by, bowH, Math.PI * 0.55, -Math.PI * 0.55);
+        }
         ctx.stroke();
         // Limb tips
         ctx.lineWidth = 1.5;
         ctx.strokeStyle = '#997744';
         const tipLen = 4;
         for (const sign of [-1, 1]) {
-            const tipAngle = sign * Math.PI * 0.45;
+            const tipAngle = dir > 0 ? sign * Math.PI * 0.45 : Math.PI + sign * Math.PI * 0.45;
             const tx = bx + dir * 4 + Math.cos(tipAngle) * bowH;
             const ty = by + Math.sin(tipAngle) * bowH;
             ctx.beginPath();
@@ -276,10 +295,12 @@ class Projectile extends Entity {
         const stringPull = progress * 14;
         ctx.strokeStyle = '#ccccaa';
         ctx.lineWidth = 1;
+        const topAngle = dir > 0 ? -Math.PI * 0.45 : Math.PI + Math.PI * 0.45;
+        const botAngle = dir > 0 ? Math.PI * 0.45 : Math.PI - Math.PI * 0.45;
         ctx.beginPath();
-        ctx.moveTo(bx + dir * 4 + Math.cos(-Math.PI * 0.45) * bowH, by + Math.sin(-Math.PI * 0.45) * bowH);
+        ctx.moveTo(bx + dir * 4 + Math.cos(topAngle) * bowH, by + Math.sin(topAngle) * bowH);
         ctx.lineTo(bx - dir * stringPull, by);
-        ctx.lineTo(bx + dir * 4 + Math.cos(Math.PI * 0.45) * bowH, by + Math.sin(Math.PI * 0.45) * bowH);
+        ctx.lineTo(bx + dir * 4 + Math.cos(botAngle) * bowH, by + Math.sin(botAngle) * bowH);
         ctx.stroke();
 
         // Arrow on string — longer shaft
@@ -465,6 +486,28 @@ class Summon extends Entity {
         if (this.freezeTimer > 0) this.freezeTimer -= dt;
         if (this.hitFlash > 0) this.hitFlash -= dt;
 
+        // Burn DoT
+        if (this.burnTimer > 0) {
+            this.burnTimer -= dt;
+            this.burnTick -= dt;
+            if (this.burnTick <= 0) {
+                this.burnTick = 500;
+                this.hp -= this.burnDmg;
+                if (this.hp <= 0) this.hp = 0;
+            }
+        }
+
+        // Poison DoT
+        if (this.poisonTimer > 0) {
+            this.poisonTimer -= dt;
+            this.poisonTick -= dt;
+            if (this.poisonTick <= 0) {
+                this.poisonTick = 500;
+                this.hp -= this.poisonDmg;
+                if (this.hp <= 0) this.hp = 0;
+            }
+        }
+
         if (!this.isStunned()) {
             this.atkTimer -= dt;
             if (this.healRate > 0) this.healTimer -= dt;
@@ -584,6 +627,7 @@ class Summon extends Entity {
         const scy = drawY + size / 2;
         Sprites.statusOverlays(ctx, scx, scy, size, {
             burning: this.burnTimer > 0,
+            poisoned: this.poisonTimer > 0,
             frozen: this.freezeTimer > 0,
             stunned: this.stunTimer > 0,
         });

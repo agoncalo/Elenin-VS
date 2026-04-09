@@ -132,7 +132,7 @@ const ENEMIES = [
     {
         id: 'mizu',
         name: 'Mizu', title: 'Water Priestess', affinity: 'water',
-        spells: ['ZZC','ZXX','ZCZ','XXZ','CZZ','CZC','CXX'],
+        spells: ['ZZC','ZXX','ZCZ','XXZ','CZZ','CZX','CZC','CXX','CCZ'],
         color: '#3498db', aiSpeed: 0.7, castRate: 2000,
         desc: 'Defensive healer. Healing Lamps and deflecting Javelineers.',
     },
@@ -146,7 +146,7 @@ const ENEMIES = [
     {
         id: 'tensei',
         name: 'Tensei', title: 'The Avatar', affinity: 'avatar',
-        spells: ['ZZX','ZZC','ZCZ','ZCX','ZCC','XZZ','XZX','XXX','XXZ','XCZ','XCX','XCC','CZX','CXZ','CXC'],
+        spells: ['ZZC','ZCZ','ZCX','XZZ','XZX','XXX','XCZ','XCX','XCC','CXZ'],
         color: '#ffffff', aiSpeed: 1.0, castRate: 1400,
         desc: 'Master of all elements. Fire, ice, thunder — nothing is beyond reach.',
     },

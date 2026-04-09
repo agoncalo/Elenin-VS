@@ -9,7 +9,7 @@ class MenuScene {
     constructor(input) {
         this.input = input;
         this.selected = 0;
-        this.options = ['Fight', 'Spells', 'Skins', 'How to Play', 'Stats'];
+        this.options = ['Fight', 'Spells', 'Skins', 'Options', 'How to Play', 'Stats'];
         this.titlePulse = 0;
     }
 
@@ -205,12 +205,151 @@ class SpellListScene {
     }
 }
 
+// ---- Options (Sound & Music) ----
+class OptionsScene {
+    constructor(input) {
+        this.input = input;
+        this.selected = 0; // 0=Music, 1=Sound, 2=Reset Tutorial, 3=Back
+        this.rows = ['Music', 'Sound', 'Reset Tutorial', 'Back'];
+        this.tutorialMsg = '';
+        this.tutorialMsgTimer = 0;
+    }
+
+    _getVol(i) {
+        return i === 0 ? AudioEngine.getMusicVolume() : AudioEngine.getSfxVolume();
+    }
+    _setVol(i, v) {
+        if (i === 0) AudioEngine.setMusicVolume(v);
+        else AudioEngine.setSfxVolume(v);
+    }
+
+    update(dt) {
+        if (this.tutorialMsgTimer > 0) this.tutorialMsgTimer -= dt;
+        if (this.input.wasPressed('ArrowUp')) this.selected = (this.selected - 1 + this.rows.length) % this.rows.length;
+        if (this.input.wasPressed('ArrowDown')) this.selected = (this.selected + 1) % this.rows.length;
+
+        if (this.selected < 2) {
+            const step = 0.05;
+            if (this.input.wasPressed('ArrowLeft')) {
+                this._setVol(this.selected, Math.max(0, Math.round((this._getVol(this.selected) - step) * 100) / 100));
+            }
+            if (this.input.wasPressed('ArrowRight')) {
+                this._setVol(this.selected, Math.min(1, Math.round((this._getVol(this.selected) + step) * 100) / 100));
+            }
+        }
+
+        if (this.input.wasPressed('Escape') || this.input.wasPressed('Backspace')) return 'back';
+        if (this.input.wasPressed('Enter') || this.input.wasPressed('KeyZ')) {
+            if (this.selected === 2) {
+                localStorage.removeItem('eleninVS_tutorialSeen');
+                this.tutorialMsg = 'Tutorial will show on next fight!';
+                this.tutorialMsgTimer = 2500;
+            }
+            if (this.selected === 3) return 'back';
+        }
+        return null;
+    }
+
+    draw(ctx) {
+        ctx.fillStyle = CONFIG.C.BG;
+        ctx.fillRect(0, 0, CONFIG.WIDTH, CONFIG.HEIGHT);
+
+        // Decorative lines
+        ctx.strokeStyle = 'rgba(233,69,96,0.06)';
+        ctx.lineWidth = 1;
+        for (let i = 0; i < 20; i++) {
+            const yy = 30 + i * 32;
+            ctx.beginPath(); ctx.moveTo(0, yy); ctx.lineTo(CONFIG.WIDTH, yy); ctx.stroke();
+        }
+
+        // Header
+        ctx.fillStyle = CONFIG.C.ACCENT;
+        ctx.font = menuFont('800', 28);
+        ctx.textAlign = 'center';
+        ctx.fillText('OPTIONS', CONFIG.WIDTH / 2, 140);
+        ctx.fillStyle = '#99aabb';
+        ctx.font = menuFont('400', 13);
+        ctx.fillText('\u2190 \u2192 Adjust    \u2191 \u2193 Navigate    ESC Back', CONFIG.WIDTH / 2, 170);
+
+        const cx = CONFIG.WIDTH / 2;
+        const barW = 220;
+        const barH = 12;
+
+        for (let i = 0; i < this.rows.length; i++) {
+            const y = 240 + i * 64;
+            const sel = i === this.selected;
+
+            if (sel) {
+                Sprites.roundRect(ctx, cx - 180, y - 24, 360, 50, 8, 'rgba(233,69,96,0.15)', CONFIG.C.ACCENT);
+                ctx.fillStyle = CONFIG.C.ACCENT;
+                ctx.font = menuFont('700', 20);
+                ctx.textAlign = 'right';
+                ctx.fillText('\u25B6', cx - 155, y + 4);
+            }
+
+            ctx.fillStyle = sel ? '#fff' : '#667788';
+            ctx.font = menuFont(sel ? '700' : '400', sel ? 22 : 18);
+            ctx.textAlign = 'left';
+
+            if (i < 2) {
+                // Volume slider row
+                ctx.fillText(this.rows[i], cx - 140, y + 4);
+
+                const vol = this._getVol(i);
+                const bx = cx + 10;
+                const by = y - barH / 2 + 1;
+
+                // Bar track
+                Sprites.roundRect(ctx, bx, by, barW, barH, 6, 'rgba(255,255,255,0.08)', null);
+
+                // Fill
+                const fillW = Math.max(0, vol * barW);
+                if (fillW > 0) {
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.moveTo(bx + 6, by);
+                    ctx.arcTo(bx + barW, by, bx + barW, by + barH, 6);
+                    ctx.arcTo(bx + barW, by + barH, bx, by + barH, 6);
+                    ctx.arcTo(bx, by + barH, bx, by, 6);
+                    ctx.arcTo(bx, by, bx + barW, by, 6);
+                    ctx.closePath();
+                    ctx.clip();
+                    ctx.fillStyle = sel ? CONFIG.C.ACCENT : '#556677';
+                    ctx.fillRect(bx, by, fillW, barH);
+                    ctx.restore();
+                }
+
+                // Percentage
+                ctx.fillStyle = sel ? '#fff' : '#99aabb';
+                ctx.font = menuFont('700', 14);
+                ctx.textAlign = 'left';
+                ctx.fillText(Math.round(vol * 100) + '%', bx + barW + 12, y + 4);
+            } else {
+                // Button rows (Reset Tutorial, Back)
+                ctx.textAlign = 'center';
+                ctx.fillText(this.rows[i], cx, y + 4);
+            }
+        }
+
+        // Tutorial reset confirmation message
+        if (this.tutorialMsgTimer > 0) {
+            const alpha = Math.min(1, this.tutorialMsgTimer / 500);
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = '#44ff88';
+            ctx.font = menuFont('700', 14);
+            ctx.textAlign = 'center';
+            ctx.fillText(this.tutorialMsg, cx, 240 + 2 * 64 + 36);
+            ctx.globalAlpha = 1;
+        }
+    }
+}
+
 // ---- Enemy Select ----
 class EnemySelectScene {
-    constructor(input, defeated) {
+    constructor(input, defeated, initialSelected) {
         this.input = input;
         this.defeated = defeated || new Set();
-        this.selected = 0;
+        this.selected = initialSelected || 0;
     }
 
     _isUnlocked(index) {
@@ -746,13 +885,28 @@ class StatsScene {
         this.stats = stats;
         this.animProgress = 0; // 0→1 for hex graph animation
         this.tab = 0; // 0 = overview + hex, 1 = detailed
+        this.confirmClear = false;
     }
 
     update(dt) {
         this.animProgress = Math.min(1, this.animProgress + dt * 0.002);
+        if (this.confirmClear) {
+            if (this.input.wasPressed('Enter') || this.input.wasPressed('KeyZ')) {
+                this.stats.reset();
+                this.confirmClear = false;
+                this.animProgress = 0;
+            }
+            if (this.input.wasPressed('Escape') || this.input.wasPressed('Backspace')) {
+                this.confirmClear = false;
+            }
+            return null;
+        }
         if (this.input.wasPressed('Escape') || this.input.wasPressed('Backspace')) return 'back';
         if (this.input.wasPressed('ArrowRight') || this.input.wasPressed('ArrowLeft')) {
             this.tab = 1 - this.tab;
+        }
+        if (this.input.wasPressed('Delete')) {
+            this.confirmClear = true;
         }
         return null;
     }
@@ -801,7 +955,25 @@ class StatsScene {
         ctx.fillStyle = 'rgba(255,255,255,0.25)';
         ctx.font = menuFont('400', 12);
         ctx.textAlign = 'center';
-        ctx.fillText('← → Switch Tab    ESC Back', CONFIG.WIDTH / 2, CONFIG.HEIGHT - 30);
+        ctx.fillText('← → Switch Tab    DEL Clear Stats    ESC Back', CONFIG.WIDTH / 2, CONFIG.HEIGHT - 30);
+
+        // Confirm clear overlay
+        if (this.confirmClear) {
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            ctx.fillRect(0, 0, CONFIG.WIDTH, CONFIG.HEIGHT);
+            Sprites.roundRect(ctx, CONFIG.WIDTH / 2 - 180, CONFIG.HEIGHT / 2 - 60, 360, 120, 12,
+                'rgba(20,20,30,0.95)', CONFIG.C.ACCENT);
+            ctx.fillStyle = '#fff';
+            ctx.font = menuFont('700', 20);
+            ctx.textAlign = 'center';
+            ctx.fillText('Clear all stats?', CONFIG.WIDTH / 2, CONFIG.HEIGHT / 2 - 15);
+            ctx.fillStyle = '#aabbcc';
+            ctx.font = menuFont('400', 14);
+            ctx.fillText('This cannot be undone.', CONFIG.WIDTH / 2, CONFIG.HEIGHT / 2 + 10);
+            ctx.fillStyle = CONFIG.C.ACCENT;
+            ctx.font = menuFont('700', 14);
+            ctx.fillText('Z / Enter  Confirm        ESC  Cancel', CONFIG.WIDTH / 2, CONFIG.HEIGHT / 2 + 40);
+        }
     }
 
     _drawPlaystyleTab(ctx) {
@@ -813,12 +985,12 @@ class StatsScene {
         const cx = 280, cy = 340;
         const radius = 130;
         const axes = [
-            { key: 'assault',    label: 'Assault',    color: '#ff6b35' },
-            { key: 'control',    label: 'Control',    color: '#9b59b6' },
-            { key: 'summoner',   label: 'Summoner',   color: '#2ecc71' },
-            { key: 'resilience', label: 'Resilience', color: '#3498db' },
-            { key: 'defense',    label: 'Defense',    color: '#f1c40f' },
-            { key: 'evasion',    label: 'Evasion',    color: '#1abc9c' },
+            { key: 'wrath',   label: 'Wrath',   color: '#ff6b35' },
+            { key: 'harmony', label: 'Harmony', color: '#9b59b6' },
+            { key: 'summon',  label: 'Summon',  color: '#2ecc71' },
+            { key: 'focus',   label: 'Focus',   color: '#3498db' },
+            { key: 'defense', label: 'Defense', color: '#f1c40f' },
+            { key: 'evasion', label: 'Evasion', color: '#1abc9c' },
         ];
         const n = axes.length;
 
@@ -1130,31 +1302,34 @@ class StatsScene {
         if (!top || top[1] < 0.05) return '— No Data Yet —';
 
         const labels = {
-            assault:    ['Berserker', 'Blade Master', 'Relentless'],
-            defense:    ['Iron Wall', 'Guardian', 'Fortress'],
-            evasion:    ['Phantom', 'Shadow Dancer', 'Wind Walker'],
-            control:    ['Dominator', 'Puppeteer', 'Zone Master'],
-            summoner:   ['Beast Tamer', 'Summoner Lord', 'Pack Leader'],
-            resilience: ['Survivor', 'Endurance Master', 'Unbreakable'],
+            wrath:   ['Blade', 'Destroyer', 'Annihilator'],
+            defense: ['Iron Wall', 'Guardian', 'Fortress'],
+            evasion: ['Phantom', 'Shadow Dancer', 'Wind Walker'],
+            harmony: ['Adept', 'Sage', 'Grand Master'],
+            summon:  ['Beast Tamer', 'War Shaman', 'Overlord'],
+            focus:   ['Marksman', 'Hawk Eye', 'Dead Shot'],
         };
 
         // Dual-class if second is > 60% of top
         if (second && second[1] > top[1] * 0.6) {
             const combos = {
-                'assault+control': 'Spell Blade',
-                'assault+evasion': 'Shadow Striker',
-                'assault+summoner': 'War Chief',
-                'assault+defense': 'Juggernaut',
-                'assault+resilience': 'Unstoppable Force',
-                'defense+resilience': 'Immovable Object',
-                'defense+control': 'Warden',
-                'defense+summoner': 'Bastion Lord',
-                'evasion+control': 'Trickster',
-                'evasion+summoner': 'Phantom Commander',
-                'evasion+assault': 'Shadow Striker',
-                'control+summoner': 'Grand Tactician',
-                'control+resilience': 'Iron Strategist',
-                'summoner+resilience': 'Immortal Summoner',
+                'wrath+harmony': 'Spell Blade',
+                'wrath+evasion': 'Shadow Striker',
+                'wrath+summon': 'War Chief',
+                'wrath+defense': 'Juggernaut',
+                'wrath+focus': 'Executioner',
+                'defense+focus': 'Iron Sniper',
+                'defense+harmony': 'Warden',
+                'defense+summon': 'Bastion Lord',
+                'evasion+harmony': 'Trickster',
+                'evasion+summon': 'Phantom Commander',
+                'evasion+wrath': 'Shadow Striker',
+                'evasion+focus': 'Void Walker',
+                'harmony+summon': 'Grand Tactician',
+                'harmony+focus': 'Enlightened One',
+                'summon+focus': 'Warlord',
+                'summon+defense': 'Bastion Lord',
+                'focus+defense': 'Iron Sniper',
             };
             const comboKey = top[0] + '+' + second[0];
             const reverseKey = second[0] + '+' + top[0];

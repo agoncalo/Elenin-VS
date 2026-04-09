@@ -401,7 +401,7 @@ const UI = {
     },
 
     // Draw recent cast history
-    drawHistory(ctx, history, side) {
+    drawHistory(ctx, history, side, fighter) {
         if (!history || history.length === 0) return;
 
         const isLeft = side === 'left';
@@ -436,9 +436,39 @@ const UI = {
             }
 
             // Spell name
-            ctx.fillStyle = AFFINITY_COLORS[spell.affinity] || '#aaa';
+            const onCd = fighter && fighter.cooldowns[entry.comboKey];
+            ctx.fillStyle = onCd ? 'rgba(255,255,255,0.3)' : (AFFINITY_COLORS[spell.affinity] || '#aaa');
             ctx.font = this.font('400', 10);
             ctx.fillText(spell.name.slice(0, 14), panelX + 40, ly);
+
+            // Cooldown bar
+            const barX = panelX + 140;
+            const barY = ly - 8;
+            const barW = 46;
+            const barH = 7;
+            const r = 3;
+            if (onCd) {
+                const maxCd = spell.stats.cd || 1000;
+                const ratio = Math.min(1, onCd / maxCd);
+                // Track
+                Sprites.roundRect(ctx, barX, barY, barW, barH, r, 'rgba(255,255,255,0.07)', null);
+                // Fill (drains left to right)
+                ctx.save();
+                ctx.beginPath();
+                ctx.moveTo(barX + r, barY);
+                ctx.arcTo(barX + barW, barY, barX + barW, barY + barH, r);
+                ctx.arcTo(barX + barW, barY + barH, barX, barY + barH, r);
+                ctx.arcTo(barX, barY + barH, barX, barY, r);
+                ctx.arcTo(barX, barY, barX + barW, barY, r);
+                ctx.closePath();
+                ctx.clip();
+                ctx.fillStyle = ratio > 0.5 ? '#cc4444' : '#dd8833';
+                ctx.fillRect(barX, barY, barW * ratio, barH);
+                ctx.restore();
+            } else {
+                // Ready — full green bar
+                Sprites.roundRect(ctx, barX, barY, barW, barH, r, 'rgba(80,220,120,0.35)', null);
+            }
         }
         ctx.globalAlpha = 1;
     },
