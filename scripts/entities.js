@@ -84,6 +84,7 @@ class Fighter extends Entity {
         // Stamina system
         this.stamina = CONFIG.STAMINA_MAX;
         this.maxStamina = CONFIG.STAMINA_MAX;
+        this.staminaRegen = null;    // custom regen rate (null = use default)
         this.staminaRegenDelay = 0;  // ms remaining before regen resumes
 
         // Blocking (retreat = guard)
@@ -171,7 +172,8 @@ class Fighter extends Entity {
         if (this.staminaRegenDelay > 0) {
             this.staminaRegenDelay -= dt;
         } else if (this.stamina < this.maxStamina) {
-            const rate = this.owner === 'enemy' ? CONFIG.AI_STAMINA_REGEN : CONFIG.STAMINA_REGEN;
+            const defaultRate = this.owner === 'enemy' ? CONFIG.AI_STAMINA_REGEN : CONFIG.STAMINA_REGEN;
+            const rate = this.staminaRegen || defaultRate;
             this.stamina = Math.min(this.maxStamina, this.stamina + rate * dt / 1000);
         }
 

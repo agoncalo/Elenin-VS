@@ -106,6 +106,7 @@ const ENEMIES = [
         name: 'Kaen', title: 'Fire Genin', affinity: 'fire',
         spells: ['ZZZ','ZZX','XZX','XXX','CZZ','CCX'],
         color: '#ff6b35', aiSpeed: 0.6, castRate: 2500,
+        stamina: 80, staminaRegen: 18,
         desc: 'Aggressive fire user. Loves Burn Lane and Fire Birds.',
     },
     {
@@ -113,6 +114,7 @@ const ENEMIES = [
         name: 'Hyoga', title: 'Ice Kunoichi', affinity: 'ice',
         spells: ['ZZZ','ZZX','XZZ','XXZ','CZX','CZZ','CCZ'],
         color: '#00d4ff', aiSpeed: 0.7, castRate: 2200,
+        stamina: 90, staminaRegen: 20,
         desc: 'Freezes lanes and hides behind Blockies and Crystal Birds.',
     },
     {
@@ -120,6 +122,7 @@ const ENEMIES = [
         name: 'Kaze', title: 'Wind Kunoichi', affinity: 'wind',
         spells: ['ZZZ','ZZC','ZXZ','ZCX','XZC','CXC','CZC'],
         color: '#88ffcc', aiSpeed: 0.9, castRate: 1800,
+        stamina: 95, staminaRegen: 22,
         desc: 'Lightning fast. Samurai and Javelineers hold the line.',
     },
     {
@@ -127,6 +130,7 @@ const ENEMIES = [
         name: 'Raiden', title: 'Thunder Jonin', affinity: 'shock',
         spells: ['ZZX','ZXC','XZX','XCC','CZX','CXC','CCC'],
         color: '#ffee00', aiSpeed: 0.8, castRate: 2000,
+        stamina: 100, staminaRegen: 24,
         desc: 'Stun-locks with AOE Shock and swarms of summons.',
     },
     {
@@ -134,6 +138,7 @@ const ENEMIES = [
         name: 'Tsuchi', title: 'Earth Sage', affinity: 'earth',
         spells: ['ZZX','ZCZ','XXC','XCC','CZX','CZC','CXC'],
         color: '#aa8855', aiSpeed: 0.5, castRate: 2800,
+        stamina: 120, staminaRegen: 20,
         desc: 'Slow but tanky. Quake stuns and walls of summons.',
     },
     {
@@ -141,6 +146,7 @@ const ENEMIES = [
         name: 'Yami', title: 'Shadow Master', affinity: 'shadow',
         spells: ['ZZX','ZCX','ZCC','XZZ','XZX','CZZ','CXX','CXC'],
         color: '#9b59b6', aiSpeed: 0.85, castRate: 1800,
+        stamina: 110, staminaRegen: 26,
         desc: 'Unpredictable. Hydras, Samurai, and Lantern heals.',
     },
     {
@@ -148,6 +154,7 @@ const ENEMIES = [
         name: 'Mizu', title: 'Water Priestess', affinity: 'water',
         spells: ['ZZC','ZXZ','ZCZ','XXZ','CZZ','CZX','CZC','CXX','CCZ'],
         color: '#3498db', aiSpeed: 0.7, castRate: 2000,
+        stamina: 110, staminaRegen: 25,
         desc: 'Defensive healer. Healing Lamps and deflecting Javelineers.',
     },
     {
@@ -155,13 +162,15 @@ const ENEMIES = [
         name: 'Ryujin', title: 'Dragon Master', affinity: 'fire',
         spells: ['ZZX','ZXX','ZXC','XZX','XXX','XCX','XCC','CXZ','CXX','CXC','CCX'],
         color: '#ff4444', aiSpeed: 1.0, castRate: 1500,
+        stamina: 130, staminaRegen: 30,
         desc: 'The ultimate test. Fire, thunder, and an army of summons.',
     },
     {
         id: 'tensei',
         name: 'Tensei', title: 'The Avatar', affinity: 'avatar',
-        spells: ['ZZC','ZCZ','ZCX','XZZ','XZX','XXX','XCZ','XCX','XCC','CXZ'],
+        spells: ['ZCZ','ZXZ','ZXC','XZZ','XXZ','XXC','XCZ','XCC','CXZ','CCZ','CCC'],
         color: '#ffffff', aiSpeed: 1.0, castRate: 1400,
+        stamina: 140, staminaRegen: 32,
         desc: 'Master of all elements. Fire, ice, thunder — nothing is beyond reach.',
     },
 ];

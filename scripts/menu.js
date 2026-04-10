@@ -525,7 +525,10 @@ class EnemySelectScene {
         ctx.fillStyle = '#99aabb';
         ctx.font = menuFont('400', 11);
         ctx.fillText('Speed: ' + (sel.aiSpeed * 100).toFixed(0) + '%', sx, sy);
-        ctx.fillText('Cast Rate: ' + (sel.castRate / 1000).toFixed(1) + 's', sx + 100, sy);
+        ctx.fillText('Stamina: ' + (sel.stamina || CONFIG.STAMINA_MAX), sx + 100, sy);
+        sy += 18;
+        ctx.fillText('Cast Rate: ' + (sel.castRate / 1000).toFixed(1) + 's', sx, sy);
+        ctx.fillText('Regen: ' + (sel.staminaRegen || CONFIG.AI_STAMINA_REGEN) + '/s', sx + 100, sy);
         sy += 18;
         ctx.fillStyle = AFFINITY_COLORS[sel.affinity] || '#888';
         ctx.font = menuFont('600', 11);

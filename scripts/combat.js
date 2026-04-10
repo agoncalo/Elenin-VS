@@ -49,6 +49,14 @@ class Combat {
         } else {
             this.enemy.color = enemyData.color || CONFIG.C.ENEMY;
             this.enemy.speed = CONFIG.PLAYER_SPEED * (enemyData.aiSpeed || 0.6);
+            // Per-enemy stamina and regen
+            if (enemyData.stamina) {
+                this.enemy.stamina = enemyData.stamina;
+                this.enemy.maxStamina = enemyData.stamina;
+            }
+            if (enemyData.staminaRegen) {
+                this.enemy.staminaRegen = enemyData.staminaRegen;
+            }
             const enemySkin = PLAYER_SKINS.find(s => s.unlockEnemy === enemyData.id);
             this.enemy.skin = enemySkin || null;
         }
@@ -1197,24 +1205,52 @@ class Combat {
         const type = typeMap[spell.affinity] || 'burn';
 
         // Target the enemy's current position on their side of the field
+        // AI tries to maximize entities caught in the 80px strip
         const cx0 = snappedCX || caster.cx;
+        const stripW = 80;
         let targetX;
         if (isPlayer) {
             // Player casting: aim at enemy's x position on the right side
             const enemy = this.enemy;
             const forwardFrac = (cx0 - CONFIG.FIELD_LEFT) / (CONFIG.MIDPOINT - CONFIG.FIELD_LEFT);
-            // Blend between midpoint and enemy position based on forward stance
             const midTarget = CONFIG.MIDPOINT + 40;
             const enemyTarget = enemy ? enemy.cx : midTarget;
             targetX = midTarget + forwardFrac * (enemyTarget - midTarget);
         } else {
-            // AI casting: aim at player's x position on the left side
+            // AI casting: find the X on the player's side that hits the most entities
             const player = this.player;
             const forwardFrac = (CONFIG.FIELD_RIGHT - cx0) / (CONFIG.FIELD_RIGHT - CONFIG.MIDPOINT);
-            // Blend between midpoint and player position based on forward stance
-            const midTarget = CONFIG.MIDPOINT - 40;
-            const playerTarget = player ? player.cx : midTarget;
-            targetX = midTarget - forwardFrac * (midTarget - playerTarget);
+
+            // Collect all target X positions on the player's side
+            const targets = [];
+            if (player) targets.push(player.cx);
+            this.summons.forEach(s => {
+                if (s.alive && s.owner === 'player') targets.push(s.cx || s.x);
+            });
+
+            if (targets.length <= 1) {
+                // Single target: just aim at it
+                const midTarget = CONFIG.MIDPOINT - 40;
+                const playerTarget = player ? player.cx : midTarget;
+                targetX = midTarget - forwardFrac * (midTarget - playerTarget);
+            } else {
+                // Find the X center that maximizes entities in a stripW window
+                let bestX = player ? player.cx : CONFIG.MIDPOINT - 40;
+                let bestCount = 0;
+                for (const tx of targets) {
+                    let count = 0;
+                    for (const ox of targets) {
+                        if (Math.abs(ox - tx) <= stripW / 2) count++;
+                    }
+                    if (count > bestCount || (count === bestCount && player && Math.abs(tx - player.cx) < Math.abs(bestX - player.cx))) {
+                        bestCount = count;
+                        bestX = tx;
+                    }
+                }
+                // Blend toward best cluster center based on forward stance
+                const midTarget = CONFIG.MIDPOINT - 40;
+                targetX = midTarget - forwardFrac * (midTarget - bestX);
+            }
         }
         const clampedX = isPlayer
             ? Math.max(CONFIG.MIDPOINT + 40, Math.min(targetX, CONFIG.FIELD_RIGHT - 10))
