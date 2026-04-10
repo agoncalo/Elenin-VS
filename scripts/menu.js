@@ -43,60 +43,60 @@ class MenuScene {
         // Title — ELENIN block-letter logo + VS
         const pulse = Math.sin(this.titlePulse) * 0.08 + 1;
         ctx.save();
-        ctx.translate(CONFIG.WIDTH / 2, 140);
+        ctx.translate(CONFIG.WIDTH / 2, 90);
         ctx.scale(pulse, pulse);
 
         // Draw the block-letter logo (from the original Elenin game)
-        drawEleninLogo(ctx, 0, 0, 0.7, Date.now());
+        drawEleninLogo(ctx, 0, 0, 0.55, Date.now());
 
         // "VS" badge to the right
         ctx.fillStyle = CONFIG.C.ACCENT;
         ctx.shadowColor = 'rgba(233,69,96,0.4)';
         ctx.shadowBlur = 10;
-        ctx.font = menuFont('800', 36);
+        ctx.font = menuFont('800', 28);
         ctx.textAlign = 'left';
-        ctx.fillText('VS', 130, 12);
+        ctx.fillText('VS', 105, 10);
         ctx.shadowBlur = 0;
 
         ctx.fillStyle = '#99aabb';
-        ctx.font = menuFont('400', 16);
+        ctx.font = menuFont('400', 12);
         ctx.textAlign = 'center';
-        ctx.fillText('Ninja Spell Combat', 0, 45);
+        ctx.fillText('Ninja Spell Combat', 0, 35);
         ctx.restore();
 
         // Menu options
         this.options.forEach((opt, i) => {
-            const y = 270 + i * 48;
+            const y = 190 + i * 38;
             const sel = i === this.selected;
             const locked = opt === 'Versus' && !this.vsUnlocked;
 
             if (sel) {
                 const tint = locked ? 'rgba(100,100,120,0.12)' : 'rgba(233,69,96,0.15)';
                 const border = locked ? '#445' : CONFIG.C.ACCENT;
-                Sprites.roundRect(ctx, CONFIG.WIDTH / 2 - 130, y - 24, 260, 42, 8, tint, border);
+                Sprites.roundRect(ctx, CONFIG.WIDTH / 2 - 120, y - 20, 240, 34, 8, tint, border);
                 // Arrow indicator
                 ctx.fillStyle = locked ? '#445' : CONFIG.C.ACCENT;
-                ctx.font = menuFont('700', 20);
+                ctx.font = menuFont('700', 16);
                 ctx.textAlign = 'right';
-                ctx.fillText('\u25B6', CONFIG.WIDTH / 2 - 100, y + 2);
+                ctx.fillText('\u25B6', CONFIG.WIDTH / 2 - 92, y + 1);
             }
 
             if (locked) {
                 ctx.fillStyle = sel ? '#556' : '#334';
-                ctx.font = menuFont(sel ? '700' : '400', sel ? 24 : 20);
+                ctx.font = menuFont(sel ? '700' : '400', sel ? 20 : 17);
                 ctx.textAlign = 'center';
-                ctx.fillText(opt, CONFIG.WIDTH / 2, y + 2);
+                ctx.fillText(opt, CONFIG.WIDTH / 2, y + 1);
                 // Lock icon + warning when selected
                 if (sel) {
                     ctx.fillStyle = '#556';
-                    ctx.font = menuFont('400', 12);
-                    ctx.fillText('\uD83D\uDD12  Defeat Mizu to unlock', CONFIG.WIDTH / 2, y + 22);
+                    ctx.font = menuFont('400', 10);
+                    ctx.fillText('\uD83D\uDD12  Defeat Mizu to unlock', CONFIG.WIDTH / 2, y + 17);
                 }
             } else {
                 ctx.fillStyle = sel ? '#fff' : '#667788';
-                ctx.font = menuFont(sel ? '700' : '400', sel ? 24 : 20);
+                ctx.font = menuFont(sel ? '700' : '400', sel ? 20 : 17);
                 ctx.textAlign = 'center';
-                ctx.fillText(opt, CONFIG.WIDTH / 2, y + 2);
+                ctx.fillText(opt, CONFIG.WIDTH / 2, y + 1);
             }
         });
 
@@ -196,7 +196,7 @@ class SpellListScene {
             let statStr = '';
             if (stats.dmg) statStr += 'DMG:' + stats.dmg + ' ';
             if (stats.hp) statStr += 'HP:' + stats.hp + ' ';
-            if (stats.cd) statStr += 'CD:' + (stats.cd / 1000).toFixed(1) + 's ';
+
             ctx.fillStyle = '#99aabb';
             ctx.font = menuFont('400', 10);
             ctx.fillText(statStr, 520, y + 16);
@@ -283,19 +283,19 @@ class OptionsScene {
 
         // Header
         ctx.fillStyle = CONFIG.C.ACCENT;
-        ctx.font = menuFont('800', 28);
+        ctx.font = menuFont('800', 24);
         ctx.textAlign = 'center';
-        ctx.fillText('OPTIONS', CONFIG.WIDTH / 2, 140);
+        ctx.fillText('OPTIONS', CONFIG.WIDTH / 2, 100);
         ctx.fillStyle = '#99aabb';
-        ctx.font = menuFont('400', 13);
-        ctx.fillText('\u2190 \u2192 Adjust    \u2191 \u2193 Navigate    ESC Back', CONFIG.WIDTH / 2, 170);
+        ctx.font = menuFont('400', 12);
+        ctx.fillText('\u2190 \u2192 Adjust    \u2191 \u2193 Navigate    ESC Back', CONFIG.WIDTH / 2, 122);
 
         const cx = CONFIG.WIDTH / 2;
         const barW = 220;
         const barH = 12;
 
         for (let i = 0; i < this.rows.length; i++) {
-            const y = 240 + i * 64;
+            const y = 180 + i * 56;
             const sel = i === this.selected;
 
             if (sel) {
@@ -413,70 +413,65 @@ class EnemySelectScene {
 
         // Enemy list (left side)
         const listX = 30;
-        const listW = 360;
+        const listW = 280;
         ENEMIES.forEach((enemy, i) => {
-            const y = 75 + i * 62;
+            const y = 68 + i * 46;
             const sel = i === this.selected;
             const unlocked = this._isUnlocked(i);
             const beaten = this.defeated.has(enemy.id);
 
             if (sel) {
                 const borderColor = unlocked ? CONFIG.C.ACCENT : '#555555';
-                Sprites.roundRect(ctx, listX, y, listW, 54, 8,
+                Sprites.roundRect(ctx, listX, y, listW, 40, 7,
                     unlocked ? 'rgba(233,69,96,0.15)' : 'rgba(80,80,80,0.15)', borderColor);
             }
 
             if (!unlocked) {
                 // Locked enemy — show silhouette
                 ctx.fillStyle = '#444455';
-                ctx.font = menuFont('400', 14);
+                ctx.font = menuFont('400', 12);
                 ctx.textAlign = 'left';
-                ctx.fillText('\uD83D\uDD12  ???', listX + 22, y + 24);
+                ctx.fillText('\uD83D\uDD12  ???', listX + 18, y + 20);
                 ctx.fillStyle = '#334';
-                ctx.font = menuFont('400', 11);
-                ctx.fillText('Defeat ' + ENEMIES[i - 1].name + ' to unlock', listX + 22, y + 42);
+                ctx.font = menuFont('400', 10);
+                ctx.fillText('Defeat ' + ENEMIES[i - 1].name + ' to unlock', listX + 18, y + 35);
                 return;
             }
 
             // Color bar
             ctx.fillStyle = enemy.color;
-            Sprites.roundRect(ctx, listX + 8, y + 8, 4, 38, 2, enemy.color);
+            Sprites.roundRect(ctx, listX + 6, y + 6, 3, 32, 2, enemy.color);
 
             // Beaten checkmark
             if (beaten) {
                 ctx.fillStyle = '#44dd66';
-                ctx.font = menuFont('700', 14);
+                ctx.font = menuFont('700', 12);
                 ctx.textAlign = 'left';
-                ctx.fillText('\u2713', listX + listW - 35, y + 30);
+                ctx.fillText('\u2713', listX + listW - 30, y + 25);
             }
 
             // Name & title
             ctx.fillStyle = sel ? '#fff' : '#778899';
-            ctx.font = menuFont(sel ? '700' : '400', 14);
+            ctx.font = menuFont(sel ? '700' : '400', 13);
             ctx.textAlign = 'left';
-            ctx.fillText(enemy.name, listX + 22, y + 24);
+            ctx.fillText(enemy.name, listX + 18, y + 20);
             ctx.fillStyle = sel ? enemy.color : '#556677';
-            ctx.font = menuFont('400', 11);
-            ctx.fillText(enemy.title, listX + 22, y + 42);
+            ctx.font = menuFont('400', 10);
+            ctx.fillText(enemy.title, listX + 18, y + 35);
 
             // Affinity badge
             ctx.fillStyle = AFFINITY_COLORS[enemy.affinity] || '#888';
-            ctx.font = menuFont('600', 10);
+            ctx.font = menuFont('600', 9);
             ctx.textAlign = 'right';
-            ctx.fillText(enemy.affinity.toUpperCase(), listX + listW - 10, y + 24);
-
-            // Spell count
-            ctx.fillStyle = '#667788';
-            ctx.font = menuFont('400', 10);
-            ctx.fillText(enemy.spells.length + ' spells', listX + listW - 10, y + 42);
+            ctx.fillText(enemy.affinity.toUpperCase(), listX + listW - 8, y + 20);
         });
 
         // Detail panel (right side)
-        const panelX = 420;
-        const panelY = 75;
-        const panelW = 510;
-        const panelH = 510;
-        Sprites.roundRect(ctx, panelX, panelY, panelW, panelH, 12, 'rgba(0,0,0,0.5)', 'rgba(255,255,255,0.06)');
+        const panelX = 330;
+        const panelY = 68;
+        const panelW = CONFIG.WIDTH - panelX - 15;
+        const panelH = CONFIG.HEIGHT - panelY - 10;
+        Sprites.roundRect(ctx, panelX, panelY, panelW, panelH, 10, 'rgba(0,0,0,0.5)', 'rgba(255,255,255,0.06)');
 
         const sel = ENEMIES[this.selected];
         const unlocked = this._isUnlocked(this.selected);
@@ -484,83 +479,83 @@ class EnemySelectScene {
         if (!unlocked) {
             // Locked enemy detail panel
             ctx.fillStyle = '#445566';
-            ctx.font = menuFont('700', 20);
+            ctx.font = menuFont('700', 18);
             ctx.textAlign = 'center';
-            ctx.fillText('\uD83D\uDD12 LOCKED', panelX + panelW / 2, panelY + 120);
+            ctx.fillText('\uD83D\uDD12 LOCKED', panelX + panelW / 2, panelY + 80);
             ctx.fillStyle = '#667788';
-            ctx.font = menuFont('400', 14);
-            ctx.fillText('Defeat ' + ENEMIES[this.selected - 1].name + ' to unlock', panelX + panelW / 2, panelY + 155);
+            ctx.font = menuFont('400', 12);
+            ctx.fillText('Defeat ' + ENEMIES[this.selected - 1].name + ' to unlock', panelX + panelW / 2, panelY + 105);
             return;
         }
 
         // Enemy ninja preview
         const enemySkin = PLAYER_SKINS.find(s => s.unlockEnemy === sel.id);
-        Sprites.ninja(ctx, panelX + panelW / 2 - 32, panelY + 20, 64, sel.color, 'left', { face: enemySkin ? enemySkin.face : 'angry', skin: enemySkin || null });
+        Sprites.ninja(ctx, panelX + panelW / 2 - 24, panelY + 12, 48, sel.color, 'left', { face: enemySkin ? enemySkin.face : 'angry', skin: enemySkin || null });
 
         // Name
         ctx.fillStyle = sel.color;
-        ctx.font = menuFont('800', 22);
+        ctx.font = menuFont('800', 18);
         ctx.textAlign = 'center';
-        ctx.fillText(sel.name, panelX + panelW / 2, panelY + 110);
+        ctx.fillText(sel.name, panelX + panelW / 2, panelY + 78);
         ctx.fillStyle = '#99aabb';
-        ctx.font = menuFont('400', 13);
-        ctx.fillText(sel.title, panelX + panelW / 2, panelY + 130);
+        ctx.font = menuFont('400', 11);
+        ctx.fillText(sel.title, panelX + panelW / 2, panelY + 94);
 
         // Description
         ctx.fillStyle = '#bbccdd';
-        ctx.font = menuFont('400', 12);
-        ctx.fillText(sel.desc, panelX + panelW / 2, panelY + 158);
+        ctx.font = menuFont('400', 10);
+        ctx.fillText(sel.desc, panelX + panelW / 2, panelY + 114);
 
         // Divider
         ctx.strokeStyle = 'rgba(255,255,255,0.08)';
         ctx.beginPath();
-        ctx.moveTo(panelX + 20, panelY + 172);
-        ctx.lineTo(panelX + panelW - 20, panelY + 172);
+        ctx.moveTo(panelX + 15, panelY + 124);
+        ctx.lineTo(panelX + panelW - 15, panelY + 124);
         ctx.stroke();
 
         // Stats
         ctx.textAlign = 'left';
-        const sx = panelX + 30;
-        let sy = panelY + 195;
+        const sx = panelX + 20;
+        let sy = panelY + 142;
         ctx.fillStyle = '#ddeeff';
-        ctx.font = menuFont('600', 12);
+        ctx.font = menuFont('600', 11);
         ctx.fillText('HP: ' + CONFIG.BASE_HP, sx, sy);
-        ctx.fillText('Loyalty: ' + CONFIG.BASE_LOYALTY, sx + 120, sy);
-        sy += 22;
+        ctx.fillText('Loyalty: ' + CONFIG.BASE_LOYALTY, sx + 100, sy);
+        sy += 18;
         ctx.fillStyle = '#99aabb';
-        ctx.font = menuFont('400', 12);
+        ctx.font = menuFont('400', 11);
         ctx.fillText('Speed: ' + (sel.aiSpeed * 100).toFixed(0) + '%', sx, sy);
-        ctx.fillText('Cast Rate: ' + (sel.castRate / 1000).toFixed(1) + 's', sx + 120, sy);
-        sy += 22;
+        ctx.fillText('Cast Rate: ' + (sel.castRate / 1000).toFixed(1) + 's', sx + 100, sy);
+        sy += 18;
         ctx.fillStyle = AFFINITY_COLORS[sel.affinity] || '#888';
-        ctx.font = menuFont('600', 12);
+        ctx.font = menuFont('600', 11);
         ctx.fillText('Affinity: ' + sel.affinity.toUpperCase(), sx, sy);
 
         // Spell list header
-        sy += 30;
+        sy += 22;
         ctx.fillStyle = CONFIG.C.ACCENT;
-        ctx.font = menuFont('700', 12);
+        ctx.font = menuFont('700', 11);
         ctx.fillText('Known Spells:', sx, sy);
-        sy += 5;
+        sy += 4;
 
         const orbColors = { 'Z': CONFIG.C.ORB_Z, 'X': CONFIG.C.ORB_X, 'C': CONFIG.C.ORB_C };
         sel.spells.forEach((key, i) => {
             const spell = SPELL_DATA[key];
             if (!spell) return;
-            sy += 19;
+            sy += 16;
 
             for (let k = 0; k < key.length; k++) {
                 ctx.fillStyle = orbColors[key[k]] || '#888';
-                ctx.font = menuFont('800', 11);
-                ctx.fillText(key[k], sx + k * 13, sy);
+                ctx.font = menuFont('800', 10);
+                ctx.fillText(key[k], sx + k * 11, sy);
             }
 
             ctx.fillStyle = AFFINITY_COLORS[spell.affinity] || '#aaa';
-            ctx.font = menuFont('400', 11);
-            ctx.fillText(spell.name, sx + 48, sy);
+            ctx.font = menuFont('400', 10);
+            ctx.fillText(spell.name, sx + 40, sy);
 
             ctx.fillStyle = CATEGORY_COLORS[spell.category] || '#888';
-            ctx.fillText(spell.type, sx + 200, sy);
+            ctx.fillText(spell.type, sx + 170, sy);
         });
     }
 }
@@ -606,59 +601,59 @@ class SkinSelectScene {
 
         // Skin list (left)
         const listX = 30;
-        const listW = 360;
+        const listW = 280;
         PLAYER_SKINS.forEach((skin, i) => {
-            const y = 75 + i * 60;
+            const y = 68 + i * 40;
             const sel = i === this.selected;
             const unlocked = this._isUnlocked(skin);
 
             if (sel) {
-                Sprites.roundRect(ctx, listX, y, listW, 52, 8,
+                Sprites.roundRect(ctx, listX, y, listW, 34, 7,
                     'rgba(233,69,96,0.15)', CONFIG.C.ACCENT);
             }
 
             // Color bar
             ctx.fillStyle = unlocked ? skin.color : '#333';
-            Sprites.roundRect(ctx, listX + 8, y + 8, 4, 36, 2, unlocked ? skin.color : '#333');
+            Sprites.roundRect(ctx, listX + 6, y + 5, 3, 24, 2, unlocked ? skin.color : '#333');
 
             // Name
             ctx.fillStyle = unlocked ? (sel ? '#fff' : '#bbccdd') : '#556677';
-            ctx.font = menuFont(sel ? '700' : '400', 14);
+            ctx.font = menuFont(sel ? '700' : '400', 12);
             ctx.textAlign = 'left';
-            ctx.fillText(unlocked ? skin.name : '???', listX + 22, y + 26);
+            ctx.fillText(unlocked ? skin.name : '???', listX + 18, y + 15);
 
-            // Unlock hint
+            // Unlock hint or status
             if (!unlocked) {
                 const enemy = getEnemyById(skin.unlockEnemy);
                 ctx.fillStyle = '#556677';
-                ctx.font = menuFont('400', 10);
-                ctx.fillText('Defeat ' + (enemy ? enemy.name : '???') + ' to unlock', listX + 22, y + 42);
+                ctx.font = menuFont('400', 9);
+                ctx.fillText('Defeat ' + (enemy ? enemy.name : '???'), listX + 18, y + 28);
             } else {
                 ctx.fillStyle = skin.accent;
-                ctx.font = menuFont('400', 10);
-                ctx.fillText(skin.id === 'default' ? 'Always available' : 'UNLOCKED', listX + 22, y + 42);
+                ctx.font = menuFont('400', 9);
+                ctx.fillText(skin.id === 'default' ? 'Always available' : 'UNLOCKED', listX + 18, y + 28);
             }
         });
 
         // Preview panel (right)
-        const panelX = 420;
-        const panelY = 75;
-        const panelW = 510;
-        const panelH = 510;
-        Sprites.roundRect(ctx, panelX, panelY, panelW, panelH, 12, 'rgba(0,0,0,0.5)', 'rgba(255,255,255,0.06)');
+        const panelX = 330;
+        const panelY = 68;
+        const panelW = CONFIG.WIDTH - panelX - 15;
+        const panelH = CONFIG.HEIGHT - panelY - 10;
+        Sprites.roundRect(ctx, panelX, panelY, panelW, panelH, 10, 'rgba(0,0,0,0.5)', 'rgba(255,255,255,0.06)');
 
         const skin = PLAYER_SKINS[this.selected];
         const unlocked = this._isUnlocked(skin);
 
         if (unlocked) {
             // Big preview
-            Sprites.ninja(ctx, panelX + panelW / 2 - 48, panelY + 30, 96, skin.color, 'right', { skin: skin, face: skin.face });
+            Sprites.ninja(ctx, panelX + panelW / 2 - 36, panelY + 20, 72, skin.color, 'right', { skin: skin, face: skin.face });
 
             // Name
             ctx.fillStyle = skin.accent;
-            ctx.font = menuFont('800', 22);
+            ctx.font = menuFont('800', 20);
             ctx.textAlign = 'center';
-            ctx.fillText(skin.name, panelX + panelW / 2, panelY + 160);
+            ctx.fillText(skin.name, panelX + panelW / 2, panelY + 115);
 
             // Detail type
             const detailLabels = {
@@ -670,32 +665,32 @@ class SkinSelectScene {
                 lightning: 'Crackling lightning aura',
             };
             ctx.fillStyle = '#99aabb';
-            ctx.font = menuFont('400', 13);
-            ctx.fillText(detailLabels[skin.detail] || '', panelX + panelW / 2, panelY + 185);
+            ctx.font = menuFont('400', 12);
+            ctx.fillText(detailLabels[skin.detail] || '', panelX + panelW / 2, panelY + 135);
 
             // Small directional previews
-            const previewY = panelY + 220;
+            const previewY = panelY + 160;
             ctx.fillStyle = '#99aabb';
-            ctx.font = menuFont('400', 11);
+            ctx.font = menuFont('400', 10);
             ctx.fillText('Preview:', panelX + panelW / 2, previewY);
-            Sprites.ninja(ctx, panelX + panelW / 2 - 60, previewY + 10, 48, skin.color, 'right', { skin: skin, face: skin.face });
-            Sprites.ninja(ctx, panelX + panelW / 2 + 12, previewY + 10, 48, skin.color, 'left', { skin: skin, face: skin.face });
+            Sprites.ninja(ctx, panelX + panelW / 2 - 54, previewY + 10, 44, skin.color, 'right', { skin: skin, face: skin.face });
+            Sprites.ninja(ctx, panelX + panelW / 2 + 10, previewY + 10, 44, skin.color, 'left', { skin: skin, face: skin.face });
         } else {
             // Locked
             ctx.fillStyle = '#445566';
-            ctx.font = menuFont('800', 48);
+            ctx.font = menuFont('800', 40);
             ctx.textAlign = 'center';
-            ctx.fillText('?', panelX + panelW / 2, panelY + 130);
+            ctx.fillText('?', panelX + panelW / 2, panelY + 100);
 
             ctx.fillStyle = '#778899';
-            ctx.font = menuFont('700', 16);
-            ctx.fillText('LOCKED', panelX + panelW / 2, panelY + 165);
+            ctx.font = menuFont('700', 14);
+            ctx.fillText('LOCKED', panelX + panelW / 2, panelY + 130);
 
             const enemy = getEnemyById(skin.unlockEnemy);
             if (enemy) {
                 ctx.fillStyle = '#667788';
-                ctx.font = menuFont('400', 13);
-                ctx.fillText('Defeat ' + enemy.name + ' (' + enemy.title + ')', panelX + panelW / 2, panelY + 195);
+                ctx.font = menuFont('400', 12);
+                ctx.fillText('Defeat ' + enemy.name + ' (' + enemy.title + ')', panelX + panelW / 2, panelY + 155);
             }
         }
     }
@@ -820,52 +815,52 @@ class HowToPlayScene {
 
         // Title
         ctx.fillStyle = CONFIG.C.ACCENT;
-        ctx.font = menuFont('800', 32);
+        ctx.font = menuFont('800', 26);
         ctx.textAlign = 'center';
-        ctx.fillText('HOW TO PLAY', CONFIG.WIDTH / 2, 60);
+        ctx.fillText('HOW TO PLAY', CONFIG.WIDTH / 2, 45);
 
         // Page subtitle
         ctx.fillStyle = '#fff';
-        ctx.font = menuFont('700', 22);
-        ctx.fillText(pg.title, CONFIG.WIDTH / 2, 110);
+        ctx.font = menuFont('700', 18);
+        ctx.fillText(pg.title, CONFIG.WIDTH / 2, 80);
 
         // Page dots
         for (let i = 0; i < this.pages.length; i++) {
             ctx.beginPath();
-            ctx.arc(CONFIG.WIDTH / 2 - 20 + i * 20, 135, i === this.page ? 5 : 3, 0, Math.PI * 2);
+            ctx.arc(CONFIG.WIDTH / 2 - 20 + i * 20, 100, i === this.page ? 5 : 3, 0, Math.PI * 2);
             ctx.fillStyle = i === this.page ? CONFIG.C.ACCENT : '#445566';
             ctx.fill();
         }
 
         // Content lines
-        const startY = 175;
+        const startY = 130;
         pg.lines.forEach((line, i) => {
-            const y = startY + i * 48;
+            const y = startY + i * 40;
             if (!line.text) return; // spacer
 
             // Icon/key badge
             if (line.icon) {
                 ctx.fillStyle = 'rgba(233,69,96,0.15)';
-                const iconW = Math.max(40, ctx.measureText(line.icon).width + 16);
-                Sprites.roundRect(ctx, CONFIG.WIDTH / 2 - 280, y - 16, iconW, 32, 6,
+                const iconW = Math.max(36, ctx.measureText(line.icon).width + 14);
+                Sprites.roundRect(ctx, CONFIG.WIDTH / 2 - 280, y - 14, iconW, 28, 5,
                     'rgba(233,69,96,0.12)', 'rgba(233,69,96,0.3)');
                 ctx.fillStyle = CONFIG.C.ACCENT;
-                ctx.font = menuFont('700', 16);
+                ctx.font = menuFont('700', 14);
                 ctx.textAlign = 'center';
-                ctx.fillText(line.icon, CONFIG.WIDTH / 2 - 280 + iconW / 2, y + 3);
+                ctx.fillText(line.icon, CONFIG.WIDTH / 2 - 280 + iconW / 2, y + 2);
             }
 
             // Text
             ctx.fillStyle = '#ccddee';
-            ctx.font = menuFont('400', 17);
+            ctx.font = menuFont('400', 14);
             ctx.textAlign = 'left';
-            ctx.fillText(line.text, CONFIG.WIDTH / 2 - 220, y + 3);
+            ctx.fillText(line.text, CONFIG.WIDTH / 2 - 220, y + 2);
         });
 
         // Combo example panel on last two pages
         if (this.page >= 1) {
-            const panelY = startY + pg.lines.length * 48 + 15;
-            Sprites.roundRect(ctx, CONFIG.WIDTH / 2 - 200, panelY, 400, 50, 8,
+            const panelY = startY + pg.lines.length * 40 + 10;
+            Sprites.roundRect(ctx, CONFIG.WIDTH / 2 - 200, panelY, 400, 46, 8,
                 'rgba(255,255,255,0.04)', 'rgba(255,255,255,0.08)');
             ctx.fillStyle = '#667788';
             ctx.font = menuFont('400', 13);
@@ -945,9 +940,9 @@ class StatsScene {
 
         // Title
         ctx.fillStyle = CONFIG.C.ACCENT;
-        ctx.font = menuFont('800', 32);
+        ctx.font = menuFont('800', 26);
         ctx.textAlign = 'center';
-        ctx.fillText('PLAYER STATS', CONFIG.WIDTH / 2, 50);
+        ctx.fillText('PLAYER STATS', CONFIG.WIDTH / 2, 40);
 
         // Tab indicators
         const tabs = ['Playstyle', 'Details'];
@@ -1001,8 +996,8 @@ class StatsScene {
         const t = this.animProgress;
 
         // --- Hexagon radar chart (left side) ---
-        const cx = 280, cy = 340;
-        const radius = 130;
+        const cx = 220, cy = 280;
+        const radius = 100;
         const axes = [
             { key: 'wrath',   label: 'Wrath',   color: '#ff6b35' },
             { key: 'harmony', label: 'Harmony', color: '#9b59b6' },
@@ -1091,7 +1086,7 @@ class StatsScene {
         }
 
         // --- Right side: quick stats ---
-        const rx = 520, ry = 115;
+        const rx = 430, ry = 100;
         ctx.textAlign = 'left';
 
         // Record
@@ -1179,15 +1174,15 @@ class StatsScene {
         const total = this.stats.totalSpellsCast || 1;
         const fights = d.totalFights || 1;
 
-        const col1x = 100, col2x = 520;
-        let y = 115;
+        const col1x = 60, col2x = 430;
+        let y = 100;
 
         // Column 1: Combat numbers
         ctx.textAlign = 'left';
         ctx.fillStyle = CONFIG.C.ACCENT;
-        ctx.font = menuFont('700', 18);
+        ctx.font = menuFont('700', 16);
         ctx.fillText('Combat', col1x, y);
-        y += 28;
+        y += 22;
 
         const combatStats = [
             ['Total Damage Dealt', d.dmgDealt],
@@ -1200,22 +1195,22 @@ class StatsScene {
         ];
         combatStats.forEach(([label, val]) => {
             ctx.fillStyle = '#aabbcc';
-            ctx.font = menuFont('400', 14);
+            ctx.font = menuFont('400', 12);
             ctx.fillText(label, col1x, y);
             ctx.fillStyle = '#fff';
-            ctx.font = menuFont('700', 14);
+            ctx.font = menuFont('700', 12);
             ctx.textAlign = 'right';
-            ctx.fillText('' + val, col1x + 300, y);
+            ctx.fillText('' + val, col1x + 280, y);
             ctx.textAlign = 'left';
-            y += 24;
+            y += 20;
         });
 
         // Column 1: Movement
-        y += 15;
+        y += 10;
         ctx.fillStyle = CONFIG.C.ACCENT;
-        ctx.font = menuFont('700', 18);
+        ctx.font = menuFont('700', 16);
         ctx.fillText('Movement', col1x, y);
-        y += 28;
+        y += 22;
 
         const moveStats = [
             ['Lane Switches', d.laneSwitches],
@@ -1224,60 +1219,60 @@ class StatsScene {
         ];
         moveStats.forEach(([label, val]) => {
             ctx.fillStyle = '#aabbcc';
-            ctx.font = menuFont('400', 14);
+            ctx.font = menuFont('400', 12);
             ctx.fillText(label, col1x, y);
             ctx.fillStyle = '#fff';
-            ctx.font = menuFont('700', 14);
+            ctx.font = menuFont('700', 12);
             ctx.textAlign = 'right';
-            ctx.fillText('' + val, col1x + 300, y);
+            ctx.fillText('' + val, col1x + 280, y);
             ctx.textAlign = 'left';
-            y += 24;
+            y += 20;
         });
 
         // Column 2: Spell type breakdown
-        y = 115;
+        y = 100;
         ctx.fillStyle = CONFIG.C.ACCENT;
-        ctx.font = menuFont('700', 18);
+        ctx.font = menuFont('700', 16);
         ctx.textAlign = 'left';
         ctx.fillText('Spell Usage', col2x, y);
-        y += 28;
+        y += 22;
 
         const typeColors = {
             projectile: '#ff6b35', instant: '#e74c3c', enchant: '#f39c12',
-            defensive: '#3498db', lane: '#9b59b6', aoe: '#e94560', summon: '#2ecc71'
+            defensive: '#3498db', lane: '#9b59b6', vlane: '#e94560', summon: '#2ecc71'
         };
-        const types = ['projectile', 'instant', 'enchant', 'defensive', 'lane', 'aoe', 'summon'];
+        const types = ['projectile', 'instant', 'enchant', 'defensive', 'lane', 'vlane', 'summon'];
         types.forEach(type => {
             const count = d.typeCast[type] || 0;
             const pct = total > 0 ? count / total : 0;
 
             ctx.fillStyle = '#aabbcc';
-            ctx.font = menuFont('400', 14);
+            ctx.font = menuFont('400', 12);
             ctx.textAlign = 'left';
             ctx.fillText(type.charAt(0).toUpperCase() + type.slice(1), col2x, y);
 
             // Bar
-            const barX = col2x + 100, barW = 180, barH = 12;
+            const barX = col2x + 90, barW = 150, barH = 10;
             ctx.fillStyle = 'rgba(255,255,255,0.06)';
-            ctx.fillRect(barX, y - 10, barW, barH);
+            ctx.fillRect(barX, y - 9, barW, barH);
             ctx.fillStyle = typeColors[type] || '#888';
-            ctx.fillRect(barX, y - 10, barW * pct, barH);
+            ctx.fillRect(barX, y - 9, barW * pct, barH);
 
             // Count
             ctx.fillStyle = '#fff';
-            ctx.font = menuFont('700', 12);
+            ctx.font = menuFont('700', 10);
             ctx.textAlign = 'right';
-            ctx.fillText(count + ' (' + Math.round(pct * 100) + '%)', col2x + 350, y);
+            ctx.fillText(count + ' (' + Math.round(pct * 100) + '%)', col2x + 310, y);
             ctx.textAlign = 'left';
-            y += 28;
+            y += 22;
         });
 
         // Column 2: Affinity breakdown
-        y += 15;
+        y += 10;
         ctx.fillStyle = CONFIG.C.ACCENT;
-        ctx.font = menuFont('700', 18);
+        ctx.font = menuFont('700', 16);
         ctx.fillText('Elements Used', col2x, y);
-        y += 28;
+        y += 22;
 
         const affinities = Object.entries(d.affinityCast)
             .sort((a, b) => b[1] - a[1])
@@ -1289,12 +1284,12 @@ class StatsScene {
             const color = CONFIG.C[aff.toUpperCase()] || '#aabbcc';
 
             ctx.fillStyle = color;
-            ctx.font = menuFont('600', 14);
+            ctx.font = menuFont('600', 12);
             ctx.textAlign = 'left';
             ctx.fillText(label, col2x, y);
 
             // Bar
-            const barX = col2x + 100, barW = 180, barH = 12;
+            const barX = col2x + 90, barW = 150, barH = 10;
             ctx.fillStyle = 'rgba(255,255,255,0.06)';
             ctx.fillRect(barX, y - 10, barW, barH);
             ctx.fillStyle = color;
@@ -1303,11 +1298,11 @@ class StatsScene {
             ctx.globalAlpha = 1;
 
             ctx.fillStyle = '#fff';
-            ctx.font = menuFont('700', 12);
+            ctx.font = menuFont('700', 10);
             ctx.textAlign = 'right';
-            ctx.fillText(count + '', col2x + 350, y);
+            ctx.fillText(count + '', col2x + 310, y);
             ctx.textAlign = 'left';
-            y += 26;
+            y += 22;
         });
     }
 

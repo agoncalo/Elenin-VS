@@ -582,6 +582,7 @@ const Sprites = {
     // ===== LANE EFFECTS =====
     laneFlames(ctx, x, y, w, h, t) {
         ctx.save();
+        const vertical = h > w;
         // Base heat shimmer
         ctx.globalAlpha = 0.18;
         const heatGrad = ctx.createLinearGradient(x, y + h, x, y);
@@ -591,11 +592,17 @@ const Sprites = {
         ctx.fillStyle = heatGrad;
         ctx.fillRect(x, y, w, h);
 
-        // Fireball rope along the lane floor (using the improved fireball sprite)
+        // Fireball rope along the lane
         ctx.globalAlpha = 0.55;
         for (let i = 0; i < 10; i++) {
-            const fx = x + (i / 10) * w + Math.sin(t / 200 + i * 1.7) * 10;
-            const fy = y + h - 8 + Math.sin(t / 150 + i * 0.7) * 8;
+            let fx, fy;
+            if (vertical) {
+                fx = x + w / 2 + Math.sin(t / 150 + i * 0.7) * (w * 0.3);
+                fy = y + (i / 10) * h + Math.sin(t / 200 + i * 1.7) * 10;
+            } else {
+                fx = x + (i / 10) * w + Math.sin(t / 200 + i * 1.7) * 10;
+                fy = y + h - 8 + Math.sin(t / 150 + i * 0.7) * 8;
+            }
             const fs = 10 + Math.sin(t / 100 + i) * 4;
             Sprites.fireball(ctx, fx, fy, fs);
         }
@@ -603,8 +610,14 @@ const Sprites = {
         // Floating ember sparks above flames
         ctx.globalAlpha = 0.7;
         for (let i = 0; i < 6; i++) {
-            const ex = x + ((t / 8 + i * 137) % w);
-            const ey = y + h * 0.3 + Math.sin(t / 150 + i * 3) * (h * 0.25);
+            let ex, ey;
+            if (vertical) {
+                ex = x + w * 0.3 + Math.sin(t / 150 + i * 3) * (w * 0.25);
+                ey = y + ((t / 8 + i * 137) % h);
+            } else {
+                ex = x + ((t / 8 + i * 137) % w);
+                ey = y + h * 0.3 + Math.sin(t / 150 + i * 3) * (h * 0.25);
+            }
             const es = 1.5 + Math.sin(t / 90 + i * 2) * 0.8;
             ctx.fillStyle = i % 2 === 0 ? '#ffcc44' : '#ff6622';
             ctx.beginPath();
@@ -617,15 +630,88 @@ const Sprites = {
 
     laneFrost(ctx, x, y, w, h, t) {
         ctx.save();
+        const vertical = h > w;
         ctx.globalAlpha = 0.25 + Math.sin(t / 400) * 0.1;
         ctx.fillStyle = '#00d4ff';
         ctx.fillRect(x, y, w, h);
         ctx.globalAlpha = 0.5;
         for (let i = 0; i < 6; i++) {
-            const sx = x + (i / 6) * w + 10;
-            const sy = y + h / 2 + Math.sin(t / 300 + i) * 10;
+            let sx, sy;
+            if (vertical) {
+                sx = x + w / 2 + Math.sin(t / 300 + i) * (w * 0.25);
+                sy = y + (i / 6) * h + 10;
+            } else {
+                sx = x + (i / 6) * w + 10;
+                sy = y + h / 2 + Math.sin(t / 300 + i) * 10;
+            }
             Sprites.iceShard(ctx, sx, sy, 8);
         }
+        ctx.restore();
+    },
+
+    laneShock(ctx, x, y, w, h, t, lifeRatio) {
+        ctx.save();
+        // Yellow tint flash — brighter at start, fading with lifeRatio
+        const fade = Math.min(1, lifeRatio * 2);
+        ctx.globalAlpha = (0.15 + fade * 0.2) * (0.7 + Math.sin(t / 40) * 0.3);
+        ctx.fillStyle = '#ffee00';
+        ctx.fillRect(x, y, w, h);
+
+        // Jagged lightning bolts
+        ctx.strokeStyle = '#ffee00';
+        ctx.shadowColor = '#ffee00';
+        ctx.shadowBlur = 10 + fade * 8;
+        ctx.lineWidth = 2 + fade;
+        const boltCount = Math.max(2, Math.floor(Math.min(w, h) / 40));
+        for (let i = 0; i < boltCount; i++) {
+            ctx.globalAlpha = 0.5 + fade * 0.4;
+            // Randomized bolt path (re-randomize every ~60ms)
+            const seed = Math.floor(t / 60) + i * 7;
+            const seededRand = (n) => {
+                let s = (seed * 9301 + n * 49297 + 233280) % 233280;
+                return s / 233280;
+            };
+            const vertical = h > w;
+            ctx.beginPath();
+            if (vertical) {
+                const bx = x + seededRand(0) * w;
+                ctx.moveTo(bx, y);
+                for (let seg = 1; seg <= 5; seg++) {
+                    const sy = y + (seg / 5) * h;
+                    const sx = bx + (seededRand(seg) - 0.5) * w * 0.7;
+                    ctx.lineTo(sx, sy);
+                }
+            } else {
+                const by = y + seededRand(0) * h;
+                ctx.moveTo(x, by);
+                for (let seg = 1; seg <= 5; seg++) {
+                    const sx = x + (seg / 5) * w;
+                    const sy = by + (seededRand(seg) - 0.5) * h * 0.7;
+                    ctx.lineTo(sx, sy);
+                }
+            }
+            ctx.stroke();
+        }
+
+        // Bright spark dots
+        ctx.fillStyle = '#ffffff';
+        ctx.shadowColor = '#ffee00';
+        ctx.shadowBlur = 6;
+        for (let i = 0; i < 8; i++) {
+            const seed2 = Math.floor(t / 45) + i * 13;
+            const sr = (n) => {
+                let s = (seed2 * 9301 + n * 49297 + 233280) % 233280;
+                return s / 233280;
+            };
+            const sx = x + sr(0) * w;
+            const sy = y + sr(1) * h;
+            ctx.globalAlpha = 0.4 + fade * 0.5;
+            ctx.beginPath();
+            ctx.arc(sx, sy, 1.5 + fade, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        ctx.shadowBlur = 0;
         ctx.restore();
     },
 

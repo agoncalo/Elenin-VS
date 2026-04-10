@@ -8,20 +8,27 @@ class InputManager {
         this.combo = [];
         this.comboTimer = 0;
         this.onSpellCast = null;
+
         this.locked = false;
         this.lockTimer = 0;
         this.enabled = true;
         this.lastCombo = [];          // last cast combo keys
         this.postCastTimer = 0;       // post-cast cooldown remaining
         this.postCastMax = 0;         // post-cast cooldown total (for progress)
+        this.inputBuffer = [];        // buffered keys during post-cast cooldown
 
         window.addEventListener('keydown', e => {
             if (!this.enabled) return;
             if (!this.keys[e.code]) this.justPressed[e.code] = true;
             this.keys[e.code] = true;
 
-            if (['KeyZ', 'KeyX', 'KeyC'].includes(e.code) && !this.locked) {
-                this._addOrb(e.code);
+            if (['KeyZ', 'KeyX', 'KeyC'].includes(e.code)) {
+                if (!this.locked) {
+                    this._addOrb(e.code);
+                } else if (this.postCastTimer > 0 && this.inputBuffer.length < 3) {
+                    // Buffer inputs during post-cast cooldown (fighting game input buffer)
+                    this.inputBuffer.push(e.code);
+                }
             }
             e.preventDefault();
         });
@@ -59,6 +66,7 @@ class InputManager {
             if (this.comboTimer <= 0) {
                 this.combo = [];
                 this.comboTimer = 0;
+                this.inputBuffer = []; // clear stale buffer on timeout
             }
         }
 
@@ -74,7 +82,12 @@ class InputManager {
         // Key lockout between orbs
         if (this.lockTimer > 0) {
             this.lockTimer -= dt;
-            if (this.lockTimer <= 0) this.locked = false;
+            if (this.lockTimer <= 0) {
+                this.locked = false;
+                // Discard any keys buffered during post-cast cooldown
+                // (prevents stale Z bleeding into the next combo)
+                this.inputBuffer = [];
+            }
         }
     }
 
@@ -95,6 +108,7 @@ class InputManager {
         this.lastCombo = [];
         this.postCastTimer = 0;
         this.postCastMax = 0;
+        this.inputBuffer = [];
         this.onSpellCast = null;
     }
 

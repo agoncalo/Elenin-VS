@@ -61,16 +61,14 @@ class Combat {
         this.laneEffects = [];
 
         // UI state
-        this.spellInfo = null;
-        this.spellInfoTimer = 0;
         this.result = null; // null | 'win' | 'lose'
         this.resultTimer = 0;
         this.paused = false;
         this.pauseSelected = 0; // 0 = Continue, 1 = Quit
 
-        // Cast history for HUD
-        this.castHistory = [];
-        this.enemyCastHistory = [];
+        // Last spell cast for HUD
+        this.lastSpell = null;      // { comboKey, timer }
+        this.enemyLastSpell = null; // { comboKey, timer }
 
         // Tutorial overlay (skip in multiplayer)
         this.showTutorial = !this.netMode && !localStorage.getItem('eleninVS_tutorialSeen');
@@ -85,6 +83,12 @@ class Combat {
         this._panelFlashL = 0;
         this._panelFlashR = 0;
 
+        // Hit-stop: brief gameplay freeze on impactful hits (fighting game style)
+        this.hitStopTimer = 0;
+        // Slow-motion: temporary time scale for dramatic moments
+        this.slowMoTimer = 0;
+        this.slowMoScale = 1;
+
         // Battlefield theme based on enemy affinity
         this.theme = this._getTheme(this.netMode ? 'fire' : enemyData.affinity);
         this.ambientTimer = 0;
@@ -92,7 +96,6 @@ class Combat {
 
         // Hook up spell casting
         this.input.onSpellCast = (key) => this._onPlayerCast(key);
-
         // Multiplayer: set up local/remote fighter references & networking
         if (this.netMode) {
             // Host controls left (player), guest controls right (enemy)
@@ -147,6 +150,13 @@ class Combat {
         }
     }
 
+    destroy() {
+        if (this._netKeyDown) {
+            window.removeEventListener('keydown', this._netKeyDown);
+            window.removeEventListener('keyup', this._netKeyUp);
+        }
+    }
+
     _onPlayerCast(comboKey) {
         if (this.result) return;
         // Tutorial: block casting during delay, then mark first cast
@@ -158,11 +168,19 @@ class Combat {
         if (!spell) return;
         // In multiplayer, local input controls localFighter
         const caster = this.netMode ? this.localFighter : this.player;
-        if (!caster.canCast(comboKey)) {
-            this.effects.statusText(caster.cx, caster.y - 15, 'NOT READY', '#ff4444');
+        if (caster.isStunned()) {
+            this.effects.statusText(caster.cx, caster.y - 15, 'STUNNED', '#ff4444');
             AudioEngine.playSfx('notReady');
             return;
         }
+        // Stamina check for player
+        const staminaCost = spell.stats.stamina || 0;
+        if (!caster.hasStamina(staminaCost)) {
+            this.effects.statusText(caster.cx, caster.y - 15, 'NO STAMINA', '#ff8844');
+            AudioEngine.playSfx('notReady');
+            return;
+        }
+        caster.spendStamina(staminaCost);
         this.executeSpell(comboKey, caster);
         // Send cast to remote peer
         if (this.netMode && this.net) {
@@ -241,8 +259,12 @@ class Combat {
         this.player.shielded = false;
         this.player.invisible = false;
         this.player.deflecting = false;
-        this.player.cooldowns = {};
         this.player.spellOnScreen = {};
+        this.player.stamina = CONFIG.STAMINA_MAX;
+        this.player.staminaRegenDelay = 0;
+        this.player.blocking = false;
+        this.player.blockLocked = false;
+        this.player.pushbackVel = 0;
 
         this.enemy.hp = CONFIG.BASE_HP;
         this.enemy.loyalty = CONFIG.BASE_LOYALTY;
@@ -260,18 +282,20 @@ class Combat {
         this.enemy.shielded = false;
         this.enemy.invisible = false;
         this.enemy.deflecting = false;
-        this.enemy.cooldowns = {};
         this.enemy.spellOnScreen = {};
+        this.enemy.stamina = CONFIG.STAMINA_MAX;
+        this.enemy.staminaRegenDelay = 0;
+        this.enemy.blocking = false;
+        this.enemy.blockLocked = false;
+        this.enemy.pushbackVel = 0;
 
         this.projectiles = [];
         this.summons = [];
         this.laneEffects = [];
         this.windups = [];
         this._kanjiFloaters = [];
-        this.castHistory = [];
-        this.enemyCastHistory = [];
-        this.spellInfo = null;
-        this.spellInfoTimer = 0;
+        this.lastSpell = null;
+        this.enemyLastSpell = null;
         this.result = null;
         this.resultTimer = 0;
         this._rematchState = null;
@@ -287,23 +311,15 @@ class Combat {
         const stats = getSpellStats(comboKey);
         if (!stats) return;
 
-        caster.startCooldown(comboKey, stats.cd || 1000);
         const isPlayer = caster.owner === 'player';
         const isLocalCast = this.netMode ? (caster === this.localFighter) : isPlayer;
 
-        // Show spell info for local caster
-        if (isLocalCast) {
-            this.spellInfo = { comboKey, stats };
-            this.spellInfoTimer = 2500;
-        }
-        // Cast history by position
+        // Track last spell for each side
         if (isPlayer) {
-            this.castHistory.unshift({ comboKey });
-            if (this.castHistory.length > 8) this.castHistory.length = 8;
+            this.lastSpell = { comboKey, timer: 3000 };
             if (this.stats) this.stats.recordSpellCast(comboKey);
         } else {
-            this.enemyCastHistory.unshift({ comboKey });
-            if (this.enemyCastHistory.length > 8) this.enemyCastHistory.length = 8;
+            this.enemyLastSpell = { comboKey, timer: 3000 };
             // Kaen shouts his combinations so the player learns
             if (this.enemyData.id === 'kaen') {
                 const label = comboKey.split('').join(' ') + '!!';
@@ -347,6 +363,9 @@ class Combat {
             if (dist <= range) {
                 const dmg = this._calcDamage(stats.dmg, caster, target, SPELL_DATA[comboKey]);
                 target.takeDamage(dmg, this.effects, caster);
+                const pushDir = isPlayer ? 1 : -1;
+                target.pushbackVel = pushDir * (target.blocking ? 2 : dmg * 1.2 + 2);
+                this.hitStop(65);
                 this._addCutLine(target.cx, target.cy);
             }
         }
@@ -356,10 +375,17 @@ class Combat {
         enemySummons.forEach(s => {
             const dist = Math.abs(s.cx - caster.cx);
             if (dist <= range) {
+                const sideFighter = s.owner === 'player' ? this.player : this.enemy;
+                if (sideFighter.invisible) return;
+                if (sideFighter.shielded) {
+                    this.effects.statusText(s.cx, s.y - 10, 'BLOCKED', CONFIG.C.SHIELD);
+                    return;
+                }
                 const dmg = this._calcDamage(stats.dmg, caster, s, SPELL_DATA[comboKey]);
                 const died = s.takeDamage(dmg, this.effects);
-                if (died === true) this._onSummonKilled(s, caster);
+                if (died === true) { this._onSummonKilled(s, caster); this.hitStop(50); }
                 else if (died === 'regrow') this._onHydraRegrow(s);
+                else this.hitStop(35);
                 this._addCutLine(s.cx, s.cy);
             }
         });
@@ -385,7 +411,7 @@ class Combat {
     // ===== WINDUP / TELEGRAPH SYSTEM =====
     // ~20 frames at 60fps per spell type for reactable telegraphs
     _windupDuration(type) {
-        const durations = { projectile: 333, instant: 333, enchant: 333, defensive: 300, lane: 333, aoe: 400, summon: 250 };
+        const durations = { projectile: 333, instant: 333, enchant: 333, defensive: 300, lane: 333, vlane: 400, summon: 250 };
         return durations[type] || 333;
     }
 
@@ -424,10 +450,10 @@ class Combat {
     }
 
     _executeWindupEffect(w) {
-        const sfxMap = { projectile: 'projectile', instant: 'slash', enchant: 'enchant', defensive: 'shield', lane: 'lane', aoe: 'aoe', summon: 'summon' };
+        const sfxMap = { projectile: 'projectile', instant: 'slash', enchant: 'enchant', defensive: 'shield', lane: 'lane', vlane: 'aoe', summon: 'summon' };
         AudioEngine.playSfx(sfxMap[w.type] || 'projectile');
-        // For lane/summon, use the snapshotted lane so switching lanes during windup doesn't move the effect
-        const needsSnap = w.type === 'lane' || w.type === 'summon';
+        // For lane/vlane/summon, use the snapshotted lane so switching lanes during windup doesn't move the effect
+        const needsSnap = w.type === 'lane' || w.type === 'vlane' || w.type === 'summon';
         const origLane = w.caster.lane;
         if (needsSnap) w.caster.lane = w.castLane;
         switch (w.type) {
@@ -436,7 +462,7 @@ class Combat {
             case 'enchant':   this._applyEnchant(w.comboKey, w.caster, w.stats); break;
             case 'defensive': this._applyDefensive(w.comboKey, w.caster, w.stats); break;
             case 'lane':      this._spawnLaneEffect(w.comboKey, w.caster, w.stats); break;
-            case 'aoe':       this._aoeAttack(w.comboKey, w.caster, w.stats); break;
+            case 'vlane':     this._spawnVLaneEffect(w.comboKey, w.caster, w.stats, w.castX); break;
             case 'summon':    this._spawnSummon(w.comboKey, w.caster, w.stats); break;
         }
         if (needsSnap) w.caster.lane = origLane;
@@ -469,7 +495,7 @@ class Combat {
                 case 'enchant':   this._drawKanjiWindup(ctx, w, progress); break;
                 case 'defensive': this._drawDefensiveWindup(ctx, w, progress); break;
                 case 'lane':      this._drawLaneWindup(ctx, w, progress); break;
-                case 'aoe':       this._drawAOEWindup(ctx, w, progress); break;
+                case 'vlane':     this._drawVLaneWindup(ctx, w, progress); break;
                 case 'summon':    this._drawSummonWindup(ctx, w, progress); break;
             }
         });
@@ -773,7 +799,7 @@ class Combat {
         const spell = SPELL_DATA[w.comboKey];
         const color = AFFINITY_COLORS[spell.affinity] || '#fff';
         const isPlayer = c.owner === 'player';
-        const isBurn = w.comboKey === 'XXX';
+        const affinity = spell.affinity;
         const t = Date.now();
 
         const laneY = CONFIG.FIELD_TOP + w.castLane * CONFIG.LANE_HEIGHT;
@@ -821,7 +847,7 @@ class Combat {
         ctx.fillRect(waveX - waveW, laneY, waveW * 2, laneH);
 
         // Element-specific flair
-        if (isBurn) {
+        if (affinity === 'fire') {
             // Rising heat columns along the lane
             ctx.globalAlpha = 0.15 + progress * 0.35;
             for (let i = 0; i < 8; i++) {
@@ -852,7 +878,7 @@ class Combat {
                 ctx.arc(ex, ey, 1.5 + Math.sin(t / 70 + i) * 0.8, 0, Math.PI * 2);
                 ctx.fill();
             }
-        } else {
+        } else if (affinity === 'ice') {
             // Frost: creeping ice crystals and mist
             ctx.globalAlpha = 0.1 + progress * 0.3;
             for (let i = 0; i < 10; i++) {
@@ -861,7 +887,6 @@ class Combat {
                 const cSize = 3 + progress * 5 + Math.sin(t / 100 + i) * 2;
                 ctx.strokeStyle = color;
                 ctx.lineWidth = 1;
-                // Crystal: 6-point star shape
                 for (let j = 0; j < 3; j++) {
                     const ca = j * Math.PI / 3 + t / 800;
                     ctx.beginPath();
@@ -877,11 +902,40 @@ class Combat {
             ctx.globalAlpha = 0.08 + progress * 0.15;
             ctx.fillStyle = mistGrad;
             ctx.fillRect(x, laneY + laneH - 20, width, 20);
+        } else if (affinity === 'shock') {
+            // Electric: jagged bolts flickering across lane
+            ctx.strokeStyle = color;
+            ctx.shadowColor = color;
+            ctx.shadowBlur = 8 + progress * 8;
+            ctx.lineWidth = 1.5 + progress * 1.5;
+            for (let i = 0; i < 5; i++) {
+                const bx = x + ((t / 6 + i * 97) % width);
+                ctx.globalAlpha = 0.3 + progress * 0.5;
+                ctx.beginPath();
+                ctx.moveTo(bx, laneY + 4);
+                for (let seg = 0; seg < 4; seg++) {
+                    const sy = laneY + 4 + (seg + 1) * (laneH - 8) / 4;
+                    const sx = bx + (Math.random() - 0.5) * 20;
+                    ctx.lineTo(sx, sy);
+                }
+                ctx.stroke();
+            }
+            // Spark dots
+            ctx.fillStyle = '#ffffff';
+            for (let i = 0; i < 6; i++) {
+                const sx = x + ((t / 5 + i * 131) % width);
+                const sy = laneY + 6 + ((t / 11 + i * 53) % (laneH - 12));
+                ctx.globalAlpha = (0.4 + Math.sin(t / 40 + i * 2) * 0.4) * progress;
+                ctx.beginPath();
+                ctx.arc(sx, sy, 1.5, 0, Math.PI * 2);
+                ctx.fill();
+            }
         }
 
         // Kanji in center of the affected zone
         if (progress > 0.3) {
-            const kanjiLabel = isBurn ? '\u706B' : '\u6C37';
+            const kanjiMap = { fire: '\u706B', ice: '\u6C37', shock: '\u96F7' };
+            const kanjiLabel = kanjiMap[affinity] || '\u8853';
             const ka = (progress - 0.3) / 0.7;
             ctx.globalAlpha = ka * 0.4;
             ctx.fillStyle = color;
@@ -899,56 +953,133 @@ class Combat {
         this._drawCasterKanji(ctx, w, progress);
     }
 
-    // --- AOE / Ultimate Field-Wide Telegraph ---
-    _drawAOEWindup(ctx, w, progress) {
+    // --- Vertical Lane Telegraph ---
+    _drawVLaneWindup(ctx, w, progress) {
+        const c = w.caster;
         const spell = SPELL_DATA[w.comboKey];
         const color = AFFINITY_COLORS[spell.affinity] || '#fff';
+        const affinity = spell.affinity;
+        const isPlayer = c.owner === 'player';
         const t = Date.now();
 
-        ctx.save();
+        // Project vlane into enemy's side — aim at enemy position
+        const cx0 = w.castX;
+        let targetX;
+        if (isPlayer) {
+            const forwardFrac = (cx0 - CONFIG.FIELD_LEFT) / (CONFIG.MIDPOINT - CONFIG.FIELD_LEFT);
+            const midTarget = CONFIG.MIDPOINT + 40;
+            const enemyTarget = this.enemy ? this.enemy.cx : midTarget;
+            targetX = midTarget + forwardFrac * (enemyTarget - midTarget);
+        } else {
+            const forwardFrac = (CONFIG.FIELD_RIGHT - cx0) / (CONFIG.FIELD_RIGHT - CONFIG.MIDPOINT);
+            const midTarget = CONFIG.MIDPOINT - 40;
+            const playerTarget = this.player ? this.player.cx : midTarget;
+            targetX = midTarget - forwardFrac * (midTarget - playerTarget);
+        }
+        const clampedX = isPlayer
+            ? Math.max(CONFIG.MIDPOINT + 40, Math.min(targetX, CONFIG.FIELD_RIGHT - 10))
+            : Math.max(CONFIG.FIELD_LEFT + 10, Math.min(targetX, CONFIG.MIDPOINT - 40));
+        const stripW = 80;
+        const x = clampedX - stripW / 2;
+        const y = CONFIG.FIELD_TOP;
+        const h = CONFIG.FIELD_HEIGHT;
 
-        // Full field color pulse
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(x, y, stripW, h);
+        ctx.clip();
+
+        // Pulsing vertical strip overlay
         const pulse = Math.sin(t / 55) * 0.5 + 0.5;
-        const alpha = (0.02 + progress * 0.1) * (0.6 + pulse * 0.4);
+        const alpha = (0.03 + progress * 0.12) * (0.6 + pulse * 0.4);
         ctx.globalAlpha = alpha;
         ctx.fillStyle = color;
-        ctx.fillRect(CONFIG.FIELD_LEFT, CONFIG.FIELD_TOP, CONFIG.FIELD_WIDTH, CONFIG.FIELD_HEIGHT);
+        ctx.fillRect(x, y, stripW, h);
 
-        // Thickening border
-        ctx.globalAlpha = 0.25 + progress * 0.55;
+        // Warning border dashes scrolling vertically
+        ctx.globalAlpha = 0.25 + progress * 0.5;
         ctx.strokeStyle = color;
-        ctx.lineWidth = 2 + progress * 4;
-        ctx.strokeRect(CONFIG.FIELD_LEFT, CONFIG.FIELD_TOP, CONFIG.FIELD_WIDTH, CONFIG.FIELD_HEIGHT);
+        ctx.lineWidth = 2;
+        ctx.setLineDash([14, 8]);
+        ctx.lineDashOffset = -(t / 18) % 22;
+        ctx.strokeRect(x + 2, y + 2, stripW - 4, h - 4);
+        ctx.setLineDash([]);
 
-        // Energy orbs converging toward field center
-        const fcx = CONFIG.FIELD_LEFT + CONFIG.FIELD_WIDTH / 2;
-        const fcy = CONFIG.FIELD_TOP + CONFIG.FIELD_HEIGHT / 2;
-        ctx.fillStyle = color;
-        ctx.shadowColor = color;
-        ctx.shadowBlur = 12;
-        const ratio = CONFIG.FIELD_HEIGHT / CONFIG.FIELD_WIDTH;
-        for (let i = 0; i < 12; i++) {
-            const angle = (i / 12) * Math.PI * 2 + t / 350;
-            const maxD = CONFIG.FIELD_WIDTH * 0.48;
-            const dist = maxD * (1 - progress * 0.65);
-            const px = fcx + Math.cos(angle) * dist;
-            const py = fcy + Math.sin(angle) * dist * ratio;
-            ctx.globalAlpha = 0.25 + progress * 0.5;
-            ctx.beginPath();
-            ctx.arc(px, py, 2 + progress * 3, 0, Math.PI * 2);
-            ctx.fill();
+        // Sweeping wave from top down
+        const waveY = y + h * progress;
+        const waveH = 20 + progress * 40;
+        const waveGrad = ctx.createLinearGradient(0, waveY - waveH, 0, waveY + waveH);
+        waveGrad.addColorStop(0, 'transparent');
+        waveGrad.addColorStop(0.5, color);
+        waveGrad.addColorStop(1, 'transparent');
+        ctx.globalAlpha = 0.2 + progress * 0.35;
+        ctx.fillStyle = waveGrad;
+        ctx.fillRect(x, waveY - waveH, stripW, waveH * 2);
+
+        // Element-specific flair
+        if (affinity === 'fire') {
+            ctx.globalAlpha = 0.15 + progress * 0.35;
+            for (let i = 0; i < 8; i++) {
+                const fy = y + (i / 8) * h + ((t / 12 + i * 37) % (h / 8));
+                const flicker = Math.sin(t / 60 + i * 1.7) * 6;
+                const fw = (8 + progress * 14) * (0.6 + Math.sin(t / 80 + i * 2.3) * 0.4);
+                const midX = x + stripW / 2;
+                const fGrad = ctx.createLinearGradient(midX - fw, 0, midX + fw, 0);
+                fGrad.addColorStop(0, '#ff4400');
+                fGrad.addColorStop(0.5, '#ffcc00');
+                fGrad.addColorStop(1, '#ff4400');
+                ctx.fillStyle = fGrad;
+                ctx.beginPath();
+                ctx.arc(midX + flicker * 0.3, fy, fw, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        } else if (affinity === 'ice') {
+            ctx.globalAlpha = 0.1 + progress * 0.3;
+            for (let i = 0; i < 10; i++) {
+                const cx = x + 6 + ((i * 17) % (stripW - 12));
+                const cy = y + ((i / 10) * h + (t / 30 + i * 47) % 40);
+                const cSize = 3 + progress * 5 + Math.sin(t / 100 + i) * 2;
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 1;
+                for (let j = 0; j < 3; j++) {
+                    const ca = j * Math.PI / 3 + t / 800;
+                    ctx.beginPath();
+                    ctx.moveTo(cx + Math.cos(ca) * cSize, cy + Math.sin(ca) * cSize);
+                    ctx.lineTo(cx - Math.cos(ca) * cSize, cy - Math.sin(ca) * cSize);
+                    ctx.stroke();
+                }
+            }
+        } else if (affinity === 'shock') {
+            ctx.strokeStyle = color;
+            ctx.shadowColor = color;
+            ctx.shadowBlur = 10 + progress * 10;
+            ctx.lineWidth = 2 + progress * 2;
+            for (let i = 0; i < 4; i++) {
+                const boltY = y + ((t / 5 + i * 113) % h);
+                ctx.globalAlpha = 0.35 + progress * 0.5;
+                ctx.beginPath();
+                ctx.moveTo(x + 4, boltY);
+                for (let seg = 0; seg < 4; seg++) {
+                    const sx = x + 4 + (seg + 1) * (stripW - 8) / 4;
+                    const sy = boltY + (Math.random() - 0.5) * 20;
+                    ctx.lineTo(sx, sy);
+                }
+                ctx.stroke();
+            }
         }
 
-        // Elemental kanji at center
+        // Kanji in center of the strip
         if (progress > 0.35) {
-            const kanjiMap = { fire: '\u968E\u77F3', ice: '\u6C37\u6CB3', shock: '\u96F7\u795E' };
-            const kanji = kanjiMap[spell.affinity] || '\u8853';
+            const kanjiMap = { fire: '\u706B\u67F1', ice: '\u6C37\u67F1', shock: '\u96F7\u6483' };
+            const kanji = kanjiMap[affinity] || '\u8853';
             const ka = (progress - 0.35) / 0.65;
-            ctx.globalAlpha = ka * 0.55;
+            ctx.globalAlpha = ka * 0.5;
             ctx.fillStyle = color;
-            ctx.font = Math.floor(24 + progress * 14) + 'px serif';
+            ctx.shadowColor = color;
+            ctx.shadowBlur = 16;
+            ctx.font = Math.floor(20 + progress * 12) + 'px serif';
             ctx.textAlign = 'center';
-            ctx.fillText(kanji, fcx, fcy + 10);
+            ctx.fillText(kanji, clampedX, y + h / 2 + 7);
         }
 
         ctx.shadowBlur = 0;
@@ -1038,76 +1169,142 @@ class Combat {
     _spawnLaneEffect(comboKey, caster, stats) {
         const isPlayer = caster.owner === 'player';
         const side = isPlayer ? 'enemy' : 'player'; // affects enemy side
-        const type = comboKey === 'XXX' ? 'burn' : 'freeze';
+        const spell = SPELL_DATA[comboKey];
+        const typeMap = { fire: 'burn', ice: 'freeze', shock: 'shock' };
+        const type = typeMap[spell.affinity] || 'burn';
         const le = new LaneEffect(caster.lane, side, type, stats.duration, stats, caster.owner);
+        le.comboKey = comboKey;
         this.laneEffects.push(le);
         caster.spellOnScreen[comboKey] = true;
+
+        // Instant effects (shock): apply damage + stun immediately
+        if (stats.instant) {
+            this._laneEffectInstant(le);
+        }
+
         this.effects.statusText(
             CONFIG.MIDPOINT + (isPlayer ? 100 : -100),
             CONFIG.FIELD_TOP + caster.lane * CONFIG.LANE_HEIGHT + CONFIG.LANE_HEIGHT / 2,
-            type.toUpperCase() + '!', AFFINITY_COLORS[SPELL_DATA[comboKey].affinity]
+            type.toUpperCase() + '!', AFFINITY_COLORS[spell.affinity]
         );
     }
 
-    _aoeAttack(comboKey, caster, stats) {
-        const spell = SPELL_DATA[comboKey];
+    _spawnVLaneEffect(comboKey, caster, stats, snappedCX) {
         const isPlayer = caster.owner === 'player';
-        const target = isPlayer ? this.enemy : this.player;
+        const side = isPlayer ? 'enemy' : 'player';
+        const spell = SPELL_DATA[comboKey];
+        const typeMap = { fire: 'burn', ice: 'freeze', shock: 'shock' };
+        const type = typeMap[spell.affinity] || 'burn';
 
-        // Hit main target
-        target.takeDamage(stats.dmg, this.effects, caster);
+        // Target the enemy's current position on their side of the field
+        const cx0 = snappedCX || caster.cx;
+        let targetX;
+        if (isPlayer) {
+            // Player casting: aim at enemy's x position on the right side
+            const enemy = this.enemy;
+            const forwardFrac = (cx0 - CONFIG.FIELD_LEFT) / (CONFIG.MIDPOINT - CONFIG.FIELD_LEFT);
+            // Blend between midpoint and enemy position based on forward stance
+            const midTarget = CONFIG.MIDPOINT + 40;
+            const enemyTarget = enemy ? enemy.cx : midTarget;
+            targetX = midTarget + forwardFrac * (enemyTarget - midTarget);
+        } else {
+            // AI casting: aim at player's x position on the left side
+            const player = this.player;
+            const forwardFrac = (CONFIG.FIELD_RIGHT - cx0) / (CONFIG.FIELD_RIGHT - CONFIG.MIDPOINT);
+            // Blend between midpoint and player position based on forward stance
+            const midTarget = CONFIG.MIDPOINT - 40;
+            const playerTarget = player ? player.cx : midTarget;
+            targetX = midTarget - forwardFrac * (midTarget - playerTarget);
+        }
+        const clampedX = isPlayer
+            ? Math.max(CONFIG.MIDPOINT + 40, Math.min(targetX, CONFIG.FIELD_RIGHT - 10))
+            : Math.max(CONFIG.FIELD_LEFT + 10, Math.min(targetX, CONFIG.MIDPOINT - 40));
 
-        // Hit all enemy summons
-        const enemySummons = this.summons.filter(s => s.owner !== caster.owner);
-        enemySummons.forEach(s => {
-            const died = s.takeDamage(stats.dmg, this.effects);
-            if (died === true) this._onSummonKilled(s, caster);
-            else if (died === 'regrow') this._onHydraRegrow(s);
-        });
+        const le = new LaneEffect(-1, side, type, stats.duration, stats, caster.owner, 'vertical', clampedX);
+        le.comboKey = comboKey;
+        this.laneEffects.push(le);
+        caster.spellOnScreen[comboKey] = true;
 
-        // Record global AOE hits for Wrath stat
-        if (isPlayer && this.stats) {
-            this.stats.recordGlobalHits(1 + enemySummons.length);
+        // Instant effects (shock): apply damage + stun immediately
+        if (stats.instant) {
+            this._laneEffectInstant(le);
         }
 
-        // Apply status based on type (reduced by element resist)
-        if (stats.burnDmg && stats.burnDur) {
-            const dur = stats.burnDur * this._elementResist(target, 'fire');
-            target.burnTimer = dur;
-            target.burnDmg = stats.burnDmg;
-            target.burnTick = 500;
-            enemySummons.forEach(s => {
-                s.burnTimer = stats.burnDur;
-                s.burnDmg = stats.burnDmg;
-                s.burnTick = 500;
-            });
-        }
-        if (stats.freezeDur) {
-            const dur = stats.freezeDur * this._elementResist(target, 'ice');
-            target.freezeTimer = Math.max(target.freezeTimer, dur);
-            enemySummons.forEach(s => { s.freezeTimer = Math.max(s.freezeTimer, stats.freezeDur); });
-            if (isPlayer && this.stats) this.stats.recordStunFreeze();
-            AudioEngine.playSfx('freeze');
-        }
-        if (stats.stunDur) {
-            const dur = stats.stunDur * this._elementResist(target, 'shock');
-            target.stunTimer = Math.max(target.stunTimer, dur);
-            enemySummons.forEach(s => { s.stunTimer = Math.max(s.stunTimer, stats.stunDur); });
-            if (isPlayer && this.stats) this.stats.recordStunFreeze();
-            AudioEngine.playSfx('stun');
-        }
-
-        // Big visual
+        // Big visual along the vertical strip
         this.effects.shake(300, 8);
-        for (let i = 0; i < 20; i++) {
+        for (let i = 0; i < 10; i++) {
             this.effects.burst(
-                CONFIG.FIELD_LEFT + Math.random() * CONFIG.FIELD_WIDTH,
+                clampedX + (Math.random() - 0.5) * 60,
                 CONFIG.FIELD_TOP + Math.random() * CONFIG.FIELD_HEIGHT,
                 AFFINITY_COLORS[spell.affinity], 5, 4, 500, 5
             );
         }
-        this.effects.statusText(CONFIG.WIDTH / 2, CONFIG.HEIGHT / 2 - 40,
+        this.effects.statusText(clampedX, CONFIG.FIELD_TOP + CONFIG.FIELD_HEIGHT / 2 - 30,
             spell.name + '!', AFFINITY_COLORS[spell.affinity]);
+    }
+
+    _laneEffectInstant(le) {
+        // Apply damage + stun/freeze in one shot (for shock-type lanes)
+        if (le.instantApplied) return;
+        le.instantApplied = true;
+        const isPlayerOwned = le.owner === 'player';
+        const target = isPlayerOwned ? this.enemy : this.player;
+        const targetSummons = this.summons.filter(s => s.owner !== le.owner);
+
+        const inBounds = (entity) => {
+            if (le.orientation === 'vertical') {
+                const bounds = le.getXBounds();
+                return entity.cx >= bounds.x && entity.cx <= bounds.x + bounds.w;
+            } else {
+                if (entity.lane == null) return false;
+                const inLane = entity.lane === le.lane || (entity.getLanes && entity.getLanes().includes(le.lane));
+                if (!inLane) return false;
+                const inSide = le.side === 'enemy' ? entity.cx > CONFIG.MIDPOINT : entity.cx < CONFIG.MIDPOINT;
+                return inSide;
+            }
+        };
+
+        // Hit main target
+        if (inBounds(target)) {
+            if (le.stats.dmg) {
+                const resist = this._elementResist(target, 'shock');
+                target.takeDamage(Math.max(1, Math.ceil(le.stats.dmg * resist)), this.effects, null);
+                const lePushDir = isPlayerOwned ? 1 : -1;
+                target.pushbackVel = lePushDir * (target.blocking ? 1 : 2);
+            }
+            if (le.stats.stunDur) {
+                const dur = le.stats.stunDur * this._elementResist(target, 'shock');
+                target.stunTimer = Math.max(target.stunTimer, dur);
+                if (isPlayerOwned && this.stats) this.stats.recordStunFreeze();
+            }
+        }
+
+        // Hit summons
+        targetSummons.forEach(s => {
+            const sInBounds = le.orientation === 'vertical'
+                ? (() => { const b = le.getXBounds(); return s.cx >= b.x && s.cx <= b.x + b.w; })()
+                : s.getLanes().includes(le.lane) && (le.side === 'enemy' ? s.cx > CONFIG.MIDPOINT : s.cx < CONFIG.MIDPOINT);
+            if (!sInBounds) return;
+            const sideFighter = s.owner === 'player' ? this.player : this.enemy;
+            if (sideFighter.shielded) {
+                this.effects.statusText(s.cx, s.y - 10, 'BLOCKED', CONFIG.C.SHIELD);
+                return;
+            }
+            if (le.stats.dmg) {
+                const resist = this._elementResist(s, 'shock');
+                const died = s.takeDamage(Math.max(1, Math.ceil(le.stats.dmg * resist)), this.effects);
+                if (died === true) this._onSummonKilled(s, isPlayerOwned ? this.player : this.enemy);
+                else if (died === 'regrow') this._onHydraRegrow(s);
+            }
+            if (le.stats.stunDur) {
+                const dur = le.stats.stunDur * this._elementResist(s, 'shock');
+                s.stunTimer = Math.max(s.stunTimer, dur);
+            }
+        });
+
+        this.effects.shake(200, 6);
+        this.hitStop(55);
+        AudioEngine.playSfx('stun');
     }
 
     _spawnSummon(comboKey, caster, stats) {
@@ -1139,8 +1336,9 @@ class Combat {
             dmg += attacker.enchant.bonusDmg;
         }
 
-        // Elemental resistance — enchant halves matching element damage
-        if (spell && target.enchant && spell.affinity !== 'none' && target.enchant.type === spell.affinity) {
+        // Elemental resistance — side's enchant halves matching element damage
+        const sideEnchant = this._sideEnchant(target);
+        if (spell && sideEnchant && spell.affinity !== 'none' && sideEnchant.type === spell.affinity) {
             dmg = Math.ceil(dmg * 0.5);
             this.effects.statusText(target.cx, target.y - 20, 'RESIST', AFFINITY_COLORS[spell.affinity]);
         }
@@ -1148,16 +1346,59 @@ class Combat {
         return Math.max(1, dmg);
     }
 
-    // Check if a fighter resists an element via enchant, returns duration multiplier
+    // Get the enchant active on a target's side (from the side's fighter)
+    _sideEnchant(target) {
+        const fighter = target.owner === 'player' ? this.player : this.enemy;
+        return fighter.enchant;
+    }
+
+    // Check if a target's side resists an element via enchant, returns duration multiplier
     _elementResist(target, affinity) {
-        if (target.enchant && affinity && target.enchant.type === affinity) return 0.5;
+        const sideEnchant = this._sideEnchant(target);
+        if (sideEnchant && affinity && sideEnchant.type === affinity) return 0.5;
         return 1;
+    }
+
+    // Hit-stop: freeze gameplay for a few frames on impact
+    hitStop(ms) {
+        this.hitStopTimer = Math.max(this.hitStopTimer, ms);
+    }
+
+    // Slow-motion: scale game speed for dramatic moments
+    slowMo(ms, scale) {
+        this.slowMoTimer = ms;
+        this.slowMoScale = scale;
     }
 
     _hasIncomingProjectile(lane) {
         return this.projectiles.some(p =>
             p.alive && p.owner === 'enemy' && p.lane === lane && p.x < CONFIG.MIDPOINT + 100
         );
+    }
+
+    // Fighting-game threat check: is anything about to hit the player?
+    _hasImmediateThreat(fighter) {
+        const lane = fighter.lane;
+        const fx = fighter.cx;
+        const threatRange = 120; // pixels — how close counts as "immediate"
+
+        // Enemy fighter in melee range on same lane
+        const foe = fighter.owner === 'player' ? this.enemy : this.player;
+        if (foe.lane === lane && Math.abs(foe.cx - fx) < threatRange) return true;
+
+        // Incoming spell projectiles in our lane heading toward us
+        const foeOwner = fighter.owner === 'player' ? 'enemy' : 'player';
+        if (this.projectiles.some(p =>
+            p.alive && p.owner === foeOwner && p.lane === lane &&
+            Math.abs(p.x - fx) < threatRange * 1.5
+        )) return true;
+
+        // Standing in enemy lane effect
+        if (this.laneEffects.some(le =>
+            le.alive && le.owner !== fighter.owner && le.lane === lane
+        )) return true;
+
+        return false;
     }
 
     _onHydraRegrow(summon) {
@@ -1171,21 +1412,11 @@ class Combat {
     }
 
     _onSummonKilled(summon, killer) {
-        // Reduce the owning fighter's loyalty when their summon dies
+        // Track stats and play death sound (no loyalty penalty for lost summons)
         if (summon.owner === 'enemy') {
-            const loyDrop = Math.ceil(summon.loyaltyVal * CONFIG.LOYALTY_PER_HP);
-            this.enemy.loyalty -= loyDrop;
-            if (this.enemy.loyalty < 0) this.enemy.loyalty = 0;
-            this.enemy.loyHitFlash = 300;
-            this.effects.statusText(summon.cx, summon.y - 20, 'LOYALTY -' + loyDrop, CONFIG.C.LOYALTY);
             if (this.stats) this.stats.recordSummonKill();
             AudioEngine.playSfx('death');
         } else if (summon.owner === 'player') {
-            const loyDrop = Math.ceil(summon.loyaltyVal * CONFIG.LOYALTY_PER_HP);
-            this.player.loyalty -= loyDrop;
-            if (this.player.loyalty < 0) this.player.loyalty = 0;
-            this.player.loyHitFlash = 300;
-            this.effects.statusText(summon.cx, summon.y - 20, 'LOYALTY -' + loyDrop, CONFIG.C.LOYALTY);
             if (this.stats) this.stats.recordOwnSummonLost();
             AudioEngine.playSfx('death');
         }
@@ -1287,6 +1518,19 @@ class Combat {
             return null;
         }
 
+        // Hit-stop: freeze gameplay but keep effects/particles alive
+        if (this.hitStopTimer > 0) {
+            this.hitStopTimer -= dt;
+            this.effects.update(dt);
+            return null;
+        }
+
+        // Slow-motion: scale dt for dramatic moments
+        if (this.slowMoTimer > 0) {
+            this.slowMoTimer -= dt;
+            dt *= this.slowMoScale;
+        }
+
         // Input: local fighter movement
         if (this.netMode) {
             // In multiplayer, local input controls localFighter
@@ -1295,7 +1539,7 @@ class Combat {
                 if (this.isHost) {
                     // Host is on the left side
                     if (this.input.isDown('ArrowLeft')) {
-                        lf.x = Math.max(CONFIG.FIELD_LEFT + 5, lf.x - lf.speed * (dt / 16));
+                        lf.x = Math.max(CONFIG.FIELD_LEFT + 5, lf.x - lf.speed * CONFIG.BACKWARD_SPEED * (dt / 16));
                     }
                     if (this.input.isDown('ArrowRight')) {
                         lf.x = Math.min(CONFIG.MIDPOINT - CONFIG.SPRITE - 5, lf.x + lf.speed * (dt / 16));
@@ -1306,7 +1550,7 @@ class Combat {
                         lf.x = Math.max(CONFIG.MIDPOINT + CONFIG.SPRITE + 5, lf.x - lf.speed * (dt / 16));
                     }
                     if (this.input.isDown('ArrowRight')) {
-                        lf.x = Math.min(CONFIG.FIELD_RIGHT - 5, lf.x + lf.speed * (dt / 16));
+                        lf.x = Math.min(CONFIG.FIELD_RIGHT - 5, lf.x + lf.speed * CONFIG.BACKWARD_SPEED * (dt / 16));
                     }
                 }
                 if (this.input.wasPressed('ArrowUp')) lf.switchLane(-1);
@@ -1315,11 +1559,21 @@ class Combat {
         } else {
             // Single player: normal movement
             const p = this.player;
+            const holdingBack = this.input.isDown('ArrowLeft') && !p.isStunned();
+            const threatNearby = holdingBack && this._hasImmediateThreat(p);
+
+            // Fighting-game back = block: if threat nearby, block in place; otherwise just walk back
+            p.blocking = holdingBack && threatNearby;
+            p.blockLocked = p.blocking;
+
             if (!p.isStunned()) {
-                if (this.input.isDown('ArrowLeft')) {
-                    p.x = Math.max(CONFIG.FIELD_LEFT + 5, p.x - p.speed * (dt / 16));
+                if (holdingBack && !threatNearby) {
+                    // No threat: walk backward (slower)
+                    p.x = Math.max(CONFIG.FIELD_LEFT + 5, p.x - p.speed * CONFIG.BACKWARD_SPEED * (dt / 16));
                 }
+                // Blocked players don't move — they plant and guard
                 if (this.input.isDown('ArrowRight')) {
+                    // Forward: full speed
                     p.x = Math.min(CONFIG.MIDPOINT - CONFIG.SPRITE - 5, p.x + p.speed * (dt / 16));
                 }
                 if (this.input.wasPressed('ArrowUp')) {
@@ -1341,17 +1595,17 @@ class Combat {
             const rf = this.remoteFighter;
             if (!rf.isStunned()) {
                 if (this.isHost) {
-                    // Remote is guest (right side): their ArrowLeft = move left on screen
+                    // Remote is guest (right side): ArrowLeft = forward, ArrowRight = backward
                     if (this.remoteInput.isDown('ArrowLeft')) {
                         rf.x = Math.max(CONFIG.MIDPOINT + CONFIG.SPRITE + 5, rf.x - rf.speed * (dt / 16));
                     }
                     if (this.remoteInput.isDown('ArrowRight')) {
-                        rf.x = Math.min(CONFIG.FIELD_RIGHT - 5, rf.x + rf.speed * (dt / 16));
+                        rf.x = Math.min(CONFIG.FIELD_RIGHT - 5, rf.x + rf.speed * CONFIG.BACKWARD_SPEED * (dt / 16));
                     }
                 } else {
-                    // Remote is host (left side): their ArrowLeft = move left on screen
+                    // Remote is host (left side): ArrowLeft = backward, ArrowRight = forward
                     if (this.remoteInput.isDown('ArrowLeft')) {
-                        rf.x = Math.max(CONFIG.FIELD_LEFT + 5, rf.x - rf.speed * (dt / 16));
+                        rf.x = Math.max(CONFIG.FIELD_LEFT + 5, rf.x - rf.speed * CONFIG.BACKWARD_SPEED * (dt / 16));
                     }
                     if (this.remoteInput.isDown('ArrowRight')) {
                         rf.x = Math.min(CONFIG.MIDPOINT - CONFIG.SPRITE - 5, rf.x + rf.speed * (dt / 16));
@@ -1405,14 +1659,18 @@ class Combat {
                 const sameKey = this.projectiles.filter(p => p.alive && p.comboKey === proj.comboKey && p.owner === proj.owner);
                 if (sameKey.length <= 0) delete owner.spellOnScreen[proj.comboKey];
 
-                // Backline loyalty penalty: unblocked summon projectile reached the far wall
-                if (!proj.hitSomething && !proj.isStatic && proj.charged && proj.fromSummon) {
+                // Backline hit: projectile reached the far wall without hitting anything
+                if (!proj.hitSomething && !proj.isStatic && proj.charged) {
                     const hitBackline = (proj.dirX > 0 && proj.x >= CONFIG.FIELD_RIGHT - 10)
                                      || (proj.dirX < 0 && proj.x <= CONFIG.FIELD_LEFT + 10);
                     if (hitBackline) {
                         const victim = proj.dirX > 0 ? this.enemy : this.player;
-                        const drop = 2;
-                        victim.loyalty -= drop;
+                        // HP damage from backline projectile
+                        const hpDmg = Math.max(1, Math.ceil(proj.dmg * 0.5));
+                        victim.takeDamage(hpDmg, this.effects);
+                        // Loyalty penalty
+                        const loyDrop = 1;
+                        victim.loyalty -= loyDrop;
                         if (victim.loyalty < 0) victim.loyalty = 0;
                         victim.loyHitFlash = 300;
                         // Flash the side panel
@@ -1421,7 +1679,7 @@ class Combat {
                         this.effects.statusText(
                             proj.dirX > 0 ? CONFIG.FIELD_RIGHT - 30 : CONFIG.FIELD_LEFT + 30,
                             CONFIG.FIELD_TOP + proj.lane * CONFIG.LANE_HEIGHT + CONFIG.LANE_HEIGHT / 2,
-                            'LOYALTY -' + drop, CONFIG.C.LOYALTY
+                            '-' + hpDmg + ' HP  -' + loyDrop + ' LOY', CONFIG.C.LOYALTY
                         );
                     }
                 }
@@ -1467,10 +1725,10 @@ class Combat {
         this.laneEffects = this.laneEffects.filter(le => {
             if (!le.alive) {
                 const owner = le.owner === 'player' ? this.player : this.enemy;
-                // Find if there's another lane effect of the same key
-                const relatedKey = le.type === 'burn' ? 'XXX' : 'XXZ';
-                const others = this.laneEffects.filter(l => l.alive && l.owner === le.owner && l.type === le.type);
-                if (others.length <= 0) delete owner.spellOnScreen[relatedKey];
+                if (le.comboKey) {
+                    const others = this.laneEffects.filter(l => l.alive && l.owner === le.owner && l.comboKey === le.comboKey);
+                    if (others.length <= 0) delete owner.spellOnScreen[le.comboKey];
+                }
                 return false;
             }
             return true;
@@ -1511,10 +1769,14 @@ class Combat {
             this._clashEffects = this._clashEffects.filter(c => c.timer > 0);
         }
 
-        // Spell info timer
-        if (this.spellInfoTimer > 0) {
-            this.spellInfoTimer -= dt;
-            if (this.spellInfoTimer <= 0) this.spellInfo = null;
+        // Decay last-spell display timers
+        if (this.lastSpell) {
+            this.lastSpell.timer -= dt;
+            if (this.lastSpell.timer <= 0) this.lastSpell = null;
+        }
+        if (this.enemyLastSpell) {
+            this.enemyLastSpell.timer -= dt;
+            if (this.enemyLastSpell.timer <= 0) this.enemyLastSpell = null;
         }
 
         // Win/lose check
@@ -1526,6 +1788,7 @@ class Combat {
             this.resultTimer = 2000;
             this.effects.shake(500, 10);
             this.effects.statusText(CONFIG.WIDTH / 2, CONFIG.HEIGHT / 2, 'VICTORY!', '#ffcc00');
+            this.hitStop(120);
             if (this.stats) this.stats.recordFightEnd(true, this.player, this.enemy);
         } else if (loseTarget.hp <= 0 || loseTarget.loyalty <= 0) {
             this.result = 'lose';
@@ -1533,6 +1796,7 @@ class Combat {
             this.effects.shake(500, 8);
             const reason = loseTarget.hp <= 0 ? 'DEFEATED' : 'LOYALTY BROKEN';
             this.effects.statusText(CONFIG.WIDTH / 2, CONFIG.HEIGHT / 2, reason, '#ff4444');
+            this.hitStop(120);
             if (this.stats) this.stats.recordFightEnd(false, this.player, this.enemy);
         }
 
@@ -1653,11 +1917,14 @@ class Combat {
             const spell = SPELL_DATA[proj.comboKey];
             const dmg = this._calcDamage(proj.dmg, isPlayerProj ? this.player : this.enemy, target, spell);
             target.takeDamage(dmg, this.effects, isPlayerProj ? this.player : this.enemy);
+            const projPushDir = proj.dirX;
+            target.pushbackVel = projPushDir * (target.blocking ? 1.5 : dmg * 0.8 + 1.5);
             if (!proj.hitSomething && this.stats) {
                 if (!isPlayerProj) this.stats.recordProjHitBy();
                 if (isPlayerProj) this.stats.recordPlayerProjHit();
             }
             proj.hitSomething = true;
+            this.hitStop(30 + dmg * 5);
             AudioEngine.playSfx('hit');
 
             // Apply enchant effects from caster
@@ -1701,7 +1968,28 @@ class Combat {
             if (Math.abs(s.cx - proj.cx) < CONFIG.SPRITE * 0.6) {
                 // Skip if piercing and already hit this summon
                 if (proj.isPiercing && proj.hitTargets.has(s)) return;
-                // Javelineer deflect
+
+                // Side-wide defensive checks (from side's fighter)
+                const sideFighter = s.owner === 'player' ? this.player : this.enemy;
+                if (sideFighter.invisible) return;
+                if (sideFighter.shielded) {
+                    this.effects.statusText(s.cx, s.y - 10, 'BLOCKED', CONFIG.C.SHIELD);
+                    if (!proj.isStatic && !proj.isPiercing) proj.alive = false;
+                    return;
+                }
+                if (sideFighter.deflecting && sideFighter.deflectHits > 0) {
+                    sideFighter.deflectHits--;
+                    if (sideFighter.deflectHits <= 0) sideFighter.deflecting = false;
+                    proj.dirX *= -1;
+                    proj.owner = sideFighter.owner;
+                    proj.facing = sideFighter.facing;
+                    proj.hitTargets.clear();
+                    this.effects.statusText(s.cx, s.y - 10, 'DEFLECT!', '#ffaaff');
+                    AudioEngine.playSfx('deflect');
+                    return;
+                }
+
+                // Javelineer deflect (summon's own ability)
                 if (s.deflectChance > 0 && Math.random() < s.deflectChance) {
                     proj.dirX *= -1;
                     proj.owner = s.owner;
@@ -1712,9 +2000,12 @@ class Combat {
 
                 if (proj.isPiercing) proj.hitTargets.add(s);
 
-                const died = s.takeDamage(proj.dmg, this.effects);
-                if (died === true) this._onSummonKilled(s, isPlayerProj ? this.player : this.enemy);
+                const spell = SPELL_DATA[proj.comboKey];
+                const dmg = this._calcDamage(proj.dmg, isPlayerProj ? this.player : this.enemy, s, spell);
+                const died = s.takeDamage(dmg, this.effects);
+                if (died === true) { this._onSummonKilled(s, isPlayerProj ? this.player : this.enemy); this.hitStop(50); }
                 else if (died === 'regrow') this._onHydraRegrow(s);
+                else this.hitStop(25 + dmg * 3);
                 proj.hitSomething = true;
                 if (proj.stats.poisonDmg) {
                     s.poisonTimer = proj.stats.poisonDur || 3000;
@@ -1791,6 +2082,7 @@ class Combat {
                     this.effects.burst(cx, cy, colorB, 8, 5, 400, 5);
                     this.effects.burst(cx, cy, '#ffffff', 6, 3, 300, 4);
                     this.effects.shake(150, 4);
+                    this.hitStop(40);
 
                     // Clash flash ring
                     this._clashEffects = this._clashEffects || [];
@@ -1862,52 +2154,95 @@ class Combat {
     }
 
     _laneEffectTick(le) {
+        // Instant (shock) effects don't tick — they applied on spawn
+        if (le.stats.instant) return;
+
         const isPlayerOwned = le.owner === 'player';
         // Determine who gets hit
         const target = isPlayerOwned ? this.enemy : this.player;
         const targetSummons = this.summons.filter(s => s.owner !== le.owner);
         let laneHits = 0;
 
-        // Hit main target if in this lane and on affected side
-        if (target.lane === le.lane) {
-            const inSide = le.side === 'enemy'
-                ? target.cx > CONFIG.MIDPOINT
-                : target.cx < CONFIG.MIDPOINT;
-            if (inSide) {
-                laneHits++;
-                if (le.type === 'burn' && le.stats.dmg) {
-                    const resist = this._elementResist(target, 'fire');
-                    target.takeDamage(Math.max(1, Math.ceil(le.stats.dmg * resist)), this.effects, null);
-                }
-                if (le.type === 'freeze' && le.stats.freezeDur) {
-                    const dur = le.stats.freezeDur * this._elementResist(target, 'ice');
-                    target.freezeTimer = Math.max(target.freezeTimer, dur);
-                }
+        const inBounds = (entity) => {
+            if (le.orientation === 'vertical') {
+                const bounds = le.getXBounds();
+                return entity.cx >= bounds.x && entity.cx <= bounds.x + bounds.w;
+            } else {
+                if (entity.lane !== le.lane) return false;
+                const inSide = le.side === 'enemy'
+                    ? entity.cx > CONFIG.MIDPOINT
+                    : entity.cx < CONFIG.MIDPOINT;
+                return inSide;
+            }
+        };
+
+        const summonInBounds = (s) => {
+            if (le.orientation === 'vertical') {
+                const bounds = le.getXBounds();
+                return s.cx >= bounds.x && s.cx <= bounds.x + bounds.w;
+            } else {
+                if (!s.getLanes().includes(le.lane)) return false;
+                const inSide = le.side === 'enemy'
+                    ? s.cx > CONFIG.MIDPOINT
+                    : s.cx < CONFIG.MIDPOINT;
+                return inSide;
+            }
+        };
+
+        // Hit main target if in bounds
+        if (inBounds(target)) {
+            laneHits++;
+            if (le.type === 'burn' && le.stats.dmg) {
+                const resist = this._elementResist(target, 'fire');
+                target.takeDamage(Math.max(1, Math.ceil(le.stats.dmg * resist)), this.effects, null);
+                const lanePushDir = le.owner === 'player' ? 1 : -1;
+                target.pushbackVel = lanePushDir * (target.blocking ? 1 : 1.5);
+            }
+            if (le.type === 'freeze' && le.stats.freezeDur) {
+                const dur = le.stats.freezeDur * this._elementResist(target, 'ice');
+                target.freezeTimer = Math.max(target.freezeTimer, dur);
+            }
+            // Apply burn DoT from vlane fire stats
+            if (le.stats.burnDmg && le.stats.burnDur) {
+                const dur = le.stats.burnDur * this._elementResist(target, 'fire');
+                target.burnTimer = dur;
+                target.burnDmg = le.stats.burnDmg;
+                target.burnTick = 500;
             }
         }
 
-        // Hit summons in lane on affected side
+        // Hit summons in bounds
         targetSummons.forEach(s => {
-            if (!s.getLanes().includes(le.lane)) return;
-            const inSide = le.side === 'enemy'
-                ? s.cx > CONFIG.MIDPOINT
-                : s.cx < CONFIG.MIDPOINT;
-            if (!inSide) return;
+            if (!summonInBounds(s)) return;
             laneHits++;
 
-            if (le.type === 'burn' && le.stats.dmg) {
-                const died = s.takeDamage(le.stats.dmg, this.effects);
+            const sideFighter = s.owner === 'player' ? this.player : this.enemy;
+            if (sideFighter.shielded) {
+                this.effects.statusText(s.cx, s.y - 10, 'BLOCKED', CONFIG.C.SHIELD);
+                return;
+            }
+
+            if ((le.type === 'burn') && le.stats.dmg) {
+                const resist = this._elementResist(s, 'fire');
+                const died = s.takeDamage(Math.max(1, Math.ceil(le.stats.dmg * resist)), this.effects);
                 if (died === true) this._onSummonKilled(s, isPlayerOwned ? this.player : this.enemy);
                 else if (died === 'regrow') this._onHydraRegrow(s);
             }
             if (le.type === 'freeze' && le.stats.freezeDur) {
-                s.freezeTimer = Math.max(s.freezeTimer, le.stats.freezeDur);
+                const dur = le.stats.freezeDur * this._elementResist(s, 'ice');
+                s.freezeTimer = Math.max(s.freezeTimer, dur);
+            }
+            if (le.stats.burnDmg && le.stats.burnDur) {
+                const dur = le.stats.burnDur * this._elementResist(s, 'fire');
+                s.burnTimer = dur;
+                s.burnDmg = le.stats.burnDmg;
+                s.burnTick = 500;
             }
         });
 
         // Record lane hits for Wrath stat
         if (isPlayerOwned && this.stats && laneHits > 0) {
-            this.stats.recordLaneHits(le.lane, laneHits);
+            this.stats.recordLaneHits(le.lane >= 0 ? le.lane : 0, laneHits);
         }
     }
 
@@ -1961,7 +2296,14 @@ class Combat {
         this.laneEffects.forEach(le => le.draw(ctx));
 
         // Summons
-        this.summons.forEach(s => s.draw(ctx));
+        this.summons.forEach(s => {
+            const sideFighter = s.owner === 'player' ? this.player : this.enemy;
+            s.draw(ctx, {
+                shielded: sideFighter.shielded,
+                invisible: sideFighter.invisible,
+                enchant: sideFighter.enchant ? sideFighter.enchant.type : null,
+            });
+        });
 
         // Projectiles
         this.projectiles.forEach(p => p.draw(ctx));
@@ -2024,6 +2366,52 @@ class Combat {
         // Fighters
         this.player.drawLane(ctx);
         this.enemy.drawLane(ctx);
+
+        // Blocking guard visual
+        if (this.player.blocking) {
+            const px = this.player.cx;
+            const py = this.player.cy;
+            const t = Date.now();
+            const pulse = 0.7 + Math.sin(t / 100) * 0.2;
+
+            ctx.save();
+            // Full block stance: large glowing shield wall
+            ctx.globalAlpha = pulse;
+            ctx.strokeStyle = '#88ccff';
+            ctx.shadowColor = '#66bbff';
+            ctx.shadowBlur = 18;
+            ctx.lineWidth = 4;
+            // Tall guard wall arc covering the body
+            ctx.beginPath();
+            ctx.arc(px - 10, py, 30, -1.2, 1.2);
+            ctx.stroke();
+            // Inner bright arc
+            ctx.globalAlpha = pulse * 0.6;
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(px - 10, py, 27, -1.0, 1.0);
+            ctx.stroke();
+            // Outer faint halo
+            ctx.globalAlpha = pulse * 0.2;
+            ctx.strokeStyle = '#88ccff';
+            ctx.lineWidth = 6;
+            ctx.beginPath();
+            ctx.arc(px - 10, py, 34, -1.3, 1.3);
+            ctx.stroke();
+            // Horizontal brace lines for "planted" feel
+            ctx.globalAlpha = pulse * 0.4;
+            ctx.strokeStyle = '#aaddff';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(px - 10, py - 20);
+            ctx.lineTo(px - 30, py - 22);
+            ctx.moveTo(px - 10, py + 20);
+            ctx.lineTo(px - 30, py + 22);
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+            ctx.restore();
+        }
 
         // Bow charge (on top of player)
         this.projectiles.forEach(p => p.drawBowCharge(ctx));
@@ -2096,8 +2484,8 @@ class Combat {
 
         // Side panels background
         ctx.fillStyle = CONFIG.C.PANEL;
-        ctx.fillRect(0, CONFIG.TOP_BAR, CONFIG.SIDE_PANEL, CONFIG.HEIGHT - CONFIG.TOP_BAR);
-        ctx.fillRect(CONFIG.WIDTH - CONFIG.SIDE_PANEL, CONFIG.TOP_BAR, CONFIG.SIDE_PANEL, CONFIG.HEIGHT - CONFIG.TOP_BAR);
+        ctx.fillRect(0, CONFIG.FIELD_TOP, CONFIG.SIDE_PANEL, CONFIG.HEIGHT - CONFIG.FIELD_TOP);
+        ctx.fillRect(CONFIG.WIDTH - CONFIG.SIDE_PANEL, CONFIG.FIELD_TOP, CONFIG.SIDE_PANEL, CONFIG.HEIGHT - CONFIG.FIELD_TOP);
 
         // Panel flash overlay on backline hit — bright flash on the field edge
         if (this._panelFlashL > 0) {
@@ -2107,10 +2495,10 @@ class Combat {
             grd.addColorStop(0, 'rgba(241,196,15,' + a + ')');
             grd.addColorStop(1, 'rgba(241,196,15,0)');
             ctx.fillStyle = grd;
-            ctx.fillRect(CONFIG.FIELD_LEFT, CONFIG.TOP_BAR, 60, CONFIG.FIELD_HEIGHT);
+            ctx.fillRect(CONFIG.FIELD_LEFT, CONFIG.FIELD_TOP, 60, CONFIG.FIELD_HEIGHT);
             // Also tint the side panel
             ctx.fillStyle = 'rgba(241,196,15,' + (a * 0.5) + ')';
-            ctx.fillRect(0, CONFIG.TOP_BAR, CONFIG.SIDE_PANEL, CONFIG.HEIGHT - CONFIG.TOP_BAR);
+            ctx.fillRect(0, CONFIG.FIELD_TOP, CONFIG.SIDE_PANEL, CONFIG.HEIGHT - CONFIG.FIELD_TOP);
         }
         if (this._panelFlashR > 0) {
             const a = Math.min(0.6, this._panelFlashR / 400 * 0.6);
@@ -2119,67 +2507,33 @@ class Combat {
             grd.addColorStop(0, 'rgba(241,196,15,0)');
             grd.addColorStop(1, 'rgba(241,196,15,' + a + ')');
             ctx.fillStyle = grd;
-            ctx.fillRect(CONFIG.FIELD_RIGHT - 60, CONFIG.TOP_BAR, 60, CONFIG.FIELD_HEIGHT);
+            ctx.fillRect(CONFIG.FIELD_RIGHT - 60, CONFIG.FIELD_TOP, 60, CONFIG.FIELD_HEIGHT);
             // Also tint the side panel
             ctx.fillStyle = 'rgba(241,196,15,' + (a * 0.5) + ')';
-            ctx.fillRect(CONFIG.WIDTH - CONFIG.SIDE_PANEL, CONFIG.TOP_BAR, CONFIG.SIDE_PANEL, CONFIG.HEIGHT - CONFIG.TOP_BAR);
+            ctx.fillRect(CONFIG.WIDTH - CONFIG.SIDE_PANEL, CONFIG.FIELD_TOP, CONFIG.SIDE_PANEL, CONFIG.HEIGHT - CONFIG.FIELD_TOP);
         }
-
-        // Player HP bar (left)
-        UI.drawPipBar(ctx, 5, CONFIG.TOP_BAR + 5, (CONFIG.SIDE_PANEL - 10) / 2,
-            CONFIG.FIELD_HEIGHT - 10, this.player.hp, this.player.maxHp,
-            CONFIG.C.HP, CONFIG.C.HP_EMPTY, 'HP', false, this.player.trailHp);
-
-        // Player Loyalty bar (left, second column)
-        UI.drawPipBar(ctx, CONFIG.SIDE_PANEL / 2 + 2, CONFIG.TOP_BAR + 5,
-            (CONFIG.SIDE_PANEL - 10) / 2, CONFIG.FIELD_HEIGHT - 10,
-            this.player.loyalty, this.player.maxLoyalty,
-            CONFIG.C.LOYALTY, CONFIG.C.LOY_EMPTY, 'LOY', false, this.player.trailLoyalty);
-
-        // Enemy HP bar (right)
-        UI.drawPipBar(ctx, CONFIG.WIDTH - CONFIG.SIDE_PANEL + 5, CONFIG.TOP_BAR + 5,
-            (CONFIG.SIDE_PANEL - 10) / 2, CONFIG.FIELD_HEIGHT - 10,
-            this.enemy.hp, this.enemy.maxHp,
-            CONFIG.C.HP, CONFIG.C.HP_EMPTY, 'HP', false, this.enemy.trailHp);
-
-        // Enemy Loyalty bar (right, second column)
-        UI.drawPipBar(ctx, CONFIG.WIDTH - CONFIG.SIDE_PANEL / 2 + 2, CONFIG.TOP_BAR + 5,
-            (CONFIG.SIDE_PANEL - 10) / 2, CONFIG.FIELD_HEIGHT - 10,
-            this.enemy.loyalty, this.enemy.maxLoyalty,
-            CONFIG.C.LOYALTY, CONFIG.C.LOY_EMPTY, 'LOY', false, this.enemy.trailLoyalty);
 
         // Effects (particles, flashes, text) — drawn after bars so popups aren't clipped
         this.effects.draw(ctx);
 
-        // Bottom panel
-        ctx.fillStyle = CONFIG.C.PANEL;
-        ctx.fillRect(0, CONFIG.HEIGHT - CONFIG.BOTTOM_PANEL, CONFIG.WIDTH, CONFIG.BOTTOM_PANEL);
-
-        // Separator
-        ctx.strokeStyle = CONFIG.C.ACCENT;
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(0, CONFIG.HEIGHT - CONFIG.BOTTOM_PANEL);
-        ctx.lineTo(CONFIG.WIDTH, CONFIG.HEIGHT - CONFIG.BOTTOM_PANEL);
-        ctx.stroke();
+        // Bottom UI overlay gradient (soft fade into field, no hard panel)
+        const botGrad = ctx.createLinearGradient(0, CONFIG.FIELD_BOTTOM - 70, 0, CONFIG.FIELD_BOTTOM);
+        botGrad.addColorStop(0, 'rgba(22, 33, 62, 0)');
+        botGrad.addColorStop(0.5, 'rgba(22, 33, 62, 0.35)');
+        botGrad.addColorStop(1, 'rgba(22, 33, 62, 0.6)');
+        ctx.fillStyle = botGrad;
+        ctx.fillRect(0, CONFIG.FIELD_BOTTOM - 70, CONFIG.WIDTH, 70);
 
         // Combo orbs
         UI.drawComboOrbs(ctx, this.input.getCombo(), this.input.getPostCastProgress());
 
-        // Spell info
-        UI.drawSpellInfo(ctx, this.spellInfo);
 
-        // Cooldowns
-        UI.drawCooldowns(ctx, this.player, 'left');
+        // Last spell used (player on left, enemy on right)
+        UI.drawLastSpell(ctx, this.lastSpell, 'left');
+        UI.drawLastSpell(ctx, this.enemyLastSpell, 'right');
 
-        // Cast history (player on left, enemy on right)
-        UI.drawHistory(ctx, this.castHistory, 'left', this.player);
-
-        // Enemy cast history
-        UI.drawHistory(ctx, this.enemyCastHistory, 'right', this.enemy);
-
-        // Top bar
-        UI.drawTopBar(ctx, this.enemyData);
+        // Top bar with fighting game bars (HP, Loyalty, Stamina)
+        UI.drawFightingBars(ctx, this.player, this.enemy, this.enemyData);
 
         ctx.restore();
 

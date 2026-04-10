@@ -2,6 +2,33 @@
 // entities.js - Game entities: Player, Enemy, Projectile, Summon, LaneEffect
 // ============================================================
 
+// Shared offscreen canvas for white-flash effect
+const _flashCanvas = document.createElement('canvas');
+const _flashCtx = _flashCanvas.getContext('2d');
+
+function _drawWhiteFlash(ctx, drawFn, x, y, w, h, flashAlpha) {
+    // Ensure offscreen canvas is big enough
+    if (_flashCanvas.width < w + 4 || _flashCanvas.height < h + 4) {
+        _flashCanvas.width = Math.max(_flashCanvas.width, w + 4);
+        _flashCanvas.height = Math.max(_flashCanvas.height, h + 4);
+    }
+    _flashCtx.clearRect(0, 0, _flashCanvas.width, _flashCanvas.height);
+    _flashCtx.save();
+    _flashCtx.translate(-x, -y);
+    drawFn(_flashCtx);
+    _flashCtx.restore();
+    // Fill white only on drawn pixels (source-atop)
+    _flashCtx.globalCompositeOperation = 'source-atop';
+    _flashCtx.fillStyle = '#ffffff';
+    _flashCtx.fillRect(0, 0, _flashCanvas.width, _flashCanvas.height);
+    _flashCtx.globalCompositeOperation = 'source-over';
+    // Stamp the white silhouette onto the main canvas
+    ctx.save();
+    ctx.globalAlpha = flashAlpha;
+    ctx.drawImage(_flashCanvas, 0, 0, w + 4, h + 4, x, y, w + 4, h + 4);
+    ctx.restore();
+}
+
 // ---- Base Entity ----
 class Entity {
     constructor(x, lane, owner) {
@@ -53,6 +80,18 @@ class Fighter extends Entity {
         this.trailHp = maxHp;
         this.trailLoyalty = maxLoyalty;
         this.loyHitFlash = 0; // flash timer when loyalty is hit
+
+        // Stamina system
+        this.stamina = CONFIG.STAMINA_MAX;
+        this.maxStamina = CONFIG.STAMINA_MAX;
+        this.staminaRegenDelay = 0;  // ms remaining before regen resumes
+
+        // Blocking (retreat = guard)
+        this.blocking = false;
+        this.blockLocked = false; // true when blocking an immediate threat (no movement)
+
+        // Pushback velocity (pixels/frame, decays each frame)
+        this.pushbackVel = 0;
     }
 
     update(dt) {
@@ -128,10 +167,26 @@ class Fighter extends Entity {
             if (this.invisTimer <= 0) this.invisible = false;
         }
 
-        // Cooldowns
-        for (const key in this.cooldowns) {
-            this.cooldowns[key] -= dt;
-            if (this.cooldowns[key] <= 0) delete this.cooldowns[key];
+        // Stamina regen
+        if (this.staminaRegenDelay > 0) {
+            this.staminaRegenDelay -= dt;
+        } else if (this.stamina < this.maxStamina) {
+            const rate = this.owner === 'enemy' ? CONFIG.AI_STAMINA_REGEN : CONFIG.STAMINA_REGEN;
+            this.stamina = Math.min(this.maxStamina, this.stamina + rate * dt / 1000);
+        }
+
+        // Pushback slide
+        if (this.pushbackVel !== 0) {
+            this.x += this.pushbackVel * (dt / 16);
+            // Clamp to field boundaries
+            if (this.owner === 'player') {
+                this.x = Math.max(CONFIG.FIELD_LEFT + 5, Math.min(CONFIG.MIDPOINT - CONFIG.SPRITE - 5, this.x));
+            } else {
+                this.x = Math.max(CONFIG.MIDPOINT + 10, Math.min(CONFIG.FIELD_RIGHT - CONFIG.SPRITE - 10, this.x));
+            }
+            // Decay toward zero with friction
+            this.pushbackVel *= 0.85;
+            if (Math.abs(this.pushbackVel) < 0.1) this.pushbackVel = 0;
         }
     }
 
@@ -146,17 +201,21 @@ class Fighter extends Entity {
 
     canCast(comboKey) {
         if (this.isStunned()) return false;
-        if (this.cooldowns[comboKey]) return false;
-        // One-per-combo on screen check (for projectiles and summons)
-        const spell = SPELL_DATA[comboKey];
-        if (spell && (spell.type === 'projectile' || spell.type === 'summon' || spell.type === 'lane')) {
-            if (this.spellOnScreen[comboKey]) return false;
-        }
         return true;
     }
 
     startCooldown(comboKey, cdMs) {
         this.cooldowns[comboKey] = cdMs;
+    }
+
+    spendStamina(amount) {
+        this.stamina -= amount;
+        if (this.stamina < 0) this.stamina = 0;
+        this.staminaRegenDelay = CONFIG.STAMINA_REGEN_DELAY;
+    }
+
+    hasStamina(amount) {
+        return this.stamina >= amount;
     }
 
     takeDamage(amount, effects, attacker) {
@@ -165,8 +224,21 @@ class Fighter extends Entity {
             if (effects) effects.statusText(this.cx, this.y - 10, 'BLOCKED', CONFIG.C.SHIELD);
             return 0;
         }
+        // Blocking reduces damage and costs stamina
+        if (this.blocking && this.stamina > 0) {
+            const reduced = Math.max(1, Math.ceil(amount * (1 - CONFIG.BLOCK_REDUCTION)));
+            this.spendStamina(CONFIG.BLOCK_STAMINA_COST);
+            this.hp -= reduced;
+            this.hitFlash = 400;
+            if (this.hp <= 0) this.hp = 0;
+            if (effects) {
+                effects.statusText(this.cx, this.y - 10, 'GUARD', '#88ccff');
+                effects.shake(60, 2);
+            }
+            return reduced;
+        }
         this.hp -= amount;
-        this.hitFlash = 250;
+        this.hitFlash = 1000;
         if (this.hp <= 0) this.hp = 0;
         // trailHp stays high — it will decay in update()
         if (effects) {
@@ -204,11 +276,17 @@ class Fighter extends Entity {
             eyesClosed: this._eyesClosed || false,
         };
 
-        if (this.hitFlash > 0 && Math.floor(this.hitFlash / 40) % 2 === 0) {
-            ctx.globalAlpha = 0.5;
-        }
-
         Sprites.ninja(ctx, this.x, drawY, CONFIG.SPRITE, this.color, this.facing, opts);
+
+        // White flash overlay when hit — draws white silhouette of the sprite
+        if (this.hitFlash > 0) {
+            const pulse = Math.floor(this.hitFlash / 80) % 2 === 0 ? 1 : 0.2;
+            const flashAlpha = Math.min(0.85, this.hitFlash / 1000) * pulse;
+            const self = this;
+            _drawWhiteFlash(ctx, (offCtx) => {
+                Sprites.ninja(offCtx, self.x, drawY, CONFIG.SPRITE, self.color, self.facing, opts);
+            }, this.x, drawY, CONFIG.SPRITE, CONFIG.SPRITE, flashAlpha);
+        }
 
         ctx.globalAlpha = 1;
 
@@ -558,7 +636,7 @@ class Summon extends Entity {
 
     takeDamage(amount, effects) {
         this.hp -= amount;
-        this.hitFlash = 120;
+        this.hitFlash = 1000;
         if (effects) effects.hit(this.cx, this.cy, '#ff8844');
         if (this.hp <= 0) {
             // Hydra respawn
@@ -577,17 +655,18 @@ class Summon extends Entity {
         return false;
     }
 
-    draw(ctx) {
+    draw(ctx, sideState) {
         const size = this.twoLane ? CONFIG.SPRITE * 1.5 : CONFIG.SPRITE;
         const drawY = this.twoLane
             ? this.y - CONFIG.LANE_HEIGHT * 0.25
             : this.y;
 
-        if (this.hitFlash > 0 && Math.floor(this.hitFlash / 30) % 2 === 0) {
-            ctx.globalAlpha = 0.5;
-        }
         if (this.freezeTimer > 0) {
             ctx.globalAlpha = 0.7;
+        }
+        // Side-wide invisibility
+        if (sideState && sideState.invisible) {
+            ctx.globalAlpha = 0.3;
         }
 
         // Healing aura (green glow clipped to lane) for healer summons
@@ -639,15 +718,56 @@ class Summon extends Entity {
             ctx.restore();
         }
 
+        const summonColor = AFFINITY_COLORS[SPELL_DATA[this.comboKey]?.affinity] || '#888';
         Sprites.summon(ctx, this.x, drawY, size,
-            AFFINITY_COLORS[SPELL_DATA[this.comboKey]?.affinity] || '#888',
-            this.icon, this.hp / this.maxHp, this.facing);
+            summonColor, this.icon, this.hp / this.maxHp, this.facing);
+
+        // White flash overlay when hit — draws white silhouette of the sprite
+        if (this.hitFlash > 0) {
+            const pulse = Math.floor(this.hitFlash / 80) % 2 === 0 ? 1 : 0.2;
+            const flashAlpha = Math.min(0.85, this.hitFlash / 1000) * pulse;
+            const self = this;
+            _drawWhiteFlash(ctx, (offCtx) => {
+                Sprites.summon(offCtx, self.x, drawY, size, summonColor, self.icon, self.hp / self.maxHp, self.facing);
+            }, this.x, drawY, Math.ceil(size), Math.ceil(size), flashAlpha);
+        }
 
         ctx.globalAlpha = 1;
 
-        // Status effect overlays on summons
         const scx = this.x + size / 2;
         const scy = drawY + size / 2;
+
+        // Side-wide shield glow
+        if (sideState && sideState.shielded) {
+            const hs = size / 2;
+            ctx.strokeStyle = CONFIG.C.SHIELD;
+            ctx.lineWidth = 2;
+            const prevAlpha = ctx.globalAlpha;
+            ctx.globalAlpha = (0.4 + Math.sin(Date.now() / 150) * 0.25) * prevAlpha;
+            ctx.beginPath();
+            ctx.arc(scx, scy, hs + 4, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.globalAlpha = prevAlpha;
+        }
+
+        // Side-wide enchant glow
+        if (sideState && sideState.enchant) {
+            const ec = AFFINITY_COLORS[sideState.enchant] || '#fff';
+            const hs = size / 2;
+            ctx.save();
+            ctx.shadowColor = ec;
+            ctx.shadowBlur = 10;
+            ctx.strokeStyle = ec;
+            ctx.lineWidth = 1.5;
+            ctx.globalAlpha = 0.5;
+            ctx.beginPath();
+            ctx.arc(scx, scy, hs + 2, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+            ctx.restore();
+        }
+
+        // Status effect overlays on summons
         Sprites.statusOverlays(ctx, scx, scy, size, {
             burning: this.burnTimer > 0,
             poisoned: this.poisonTimer > 0,
@@ -678,16 +798,21 @@ class Summon extends Entity {
 
 // ---- Lane Effect ----
 class LaneEffect {
-    constructor(lane, side, type, duration, stats, owner) {
+    constructor(lane, side, type, duration, stats, owner, orientation, centerX) {
         this.lane = lane;
-        this.side = side;    // 'enemy' half or 'player' half
-        this.type = type;    // 'burn', 'freeze'
+        this.side = side;         // 'enemy' half or 'player' half
+        this.type = type;         // 'burn', 'freeze', 'shock'
         this.duration = duration;
         this.maxDuration = duration;
         this.stats = stats;
         this.owner = owner;
+        this.orientation = orientation || 'horizontal'; // 'horizontal' | 'vertical'
+        this.centerX = centerX || 0;  // X center for vertical lane effects
+        this.stripWidth = 80;         // width of the vertical strip
         this.tickTimer = stats.tickRate || 500;
         this.alive = true;
+        this.instantApplied = false;  // for instant (shock) effects — apply once
+        this.comboKey = null;         // set after construction for cleanup
     }
 
     update(dt) {
@@ -704,22 +829,43 @@ class LaneEffect {
         return false;
     }
 
-    draw(ctx) {
-        const laneY = CONFIG.FIELD_TOP + this.lane * CONFIG.LANE_HEIGHT;
-        const laneH = CONFIG.LANE_HEIGHT;
-        let x, w;
-        if (this.side === 'enemy') {
-            x = CONFIG.MIDPOINT;
-            w = CONFIG.FIELD_RIGHT - CONFIG.MIDPOINT;
-        } else {
-            x = CONFIG.FIELD_LEFT;
-            w = CONFIG.MIDPOINT - CONFIG.FIELD_LEFT;
+    // Get the X region this effect covers
+    getXBounds() {
+        if (this.orientation === 'vertical') {
+            return { x: this.centerX - this.stripWidth / 2, w: this.stripWidth };
         }
+        if (this.side === 'enemy') {
+            return { x: CONFIG.MIDPOINT, w: CONFIG.FIELD_RIGHT - CONFIG.MIDPOINT };
+        }
+        return { x: CONFIG.FIELD_LEFT, w: CONFIG.MIDPOINT - CONFIG.FIELD_LEFT };
+    }
+
+    draw(ctx) {
         const t = Date.now();
-        if (this.type === 'burn') {
-            Sprites.laneFlames(ctx, x, laneY, w, laneH, t);
-        } else if (this.type === 'freeze') {
-            Sprites.laneFrost(ctx, x, laneY, w, laneH, t);
+        if (this.orientation === 'vertical') {
+            const bounds = this.getXBounds();
+            const x = bounds.x;
+            const w = bounds.w;
+            const y = CONFIG.FIELD_TOP;
+            const h = CONFIG.FIELD_HEIGHT;
+            if (this.type === 'burn') {
+                Sprites.laneFlames(ctx, x, y, w, h, t);
+            } else if (this.type === 'freeze') {
+                Sprites.laneFrost(ctx, x, y, w, h, t);
+            } else if (this.type === 'shock') {
+                Sprites.laneShock(ctx, x, y, w, h, t, this.duration / this.maxDuration);
+            }
+        } else {
+            const laneY = CONFIG.FIELD_TOP + this.lane * CONFIG.LANE_HEIGHT;
+            const laneH = CONFIG.LANE_HEIGHT;
+            const bounds = this.getXBounds();
+            if (this.type === 'burn') {
+                Sprites.laneFlames(ctx, bounds.x, laneY, bounds.w, laneH, t);
+            } else if (this.type === 'freeze') {
+                Sprites.laneFrost(ctx, bounds.x, laneY, bounds.w, laneH, t);
+            } else if (this.type === 'shock') {
+                Sprites.laneShock(ctx, bounds.x, laneY, bounds.w, laneH, t, this.duration / this.maxDuration);
+            }
         }
     }
 }
