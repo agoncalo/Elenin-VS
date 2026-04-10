@@ -371,10 +371,12 @@ class Combat {
             if (dist <= range) {
                 const dmg = this._calcDamage(stats.dmg, caster, target, SPELL_DATA[comboKey]);
                 target.takeDamage(dmg, this.effects, caster);
-                const pushDir = isPlayer ? 1 : -1;
-                target.pushbackVel = pushDir * (target.blocking ? 2 : dmg * 1.2 + 2);
-                this.hitStop(65);
-                this._addCutLine(target.cx, target.cy);
+                if (!this._checkParry(target)) {
+                    const pushDir = isPlayer ? 1 : -1;
+                    target.pushbackVel = pushDir * (target.blocking ? 2 : dmg * 1.2 + 2);
+                    this.hitStop(65);
+                    this._addCutLine(target.cx, target.cy);
+                }
             }
         }
 
@@ -1302,13 +1304,22 @@ class Combat {
 
         // Hit main target
         if (inBounds(target)) {
+            let parried = false;
             if (le.stats.dmg) {
                 const resist = this._elementResist(target, 'shock');
                 target.takeDamage(Math.max(1, Math.ceil(le.stats.dmg * resist)), this.effects, null);
-                const lePushDir = isPlayerOwned ? 1 : -1;
-                target.pushbackVel = lePushDir * (target.blocking ? 1 : 2);
+                parried = this._checkParry(target);
+                if (!parried) {
+                    const lePushDir = isPlayerOwned ? 1 : -1;
+                    target.pushbackVel = lePushDir * (target.blocking ? 1 : 2);
+                }
+            } else if (target.parryWindow > 0 && target.owner === 'player') {
+                // Pure-stun lane: parry negates the stun too
+                target.parryWindow = 0;
+                target.parrySuccess = true;
+                parried = this._checkParry(target);
             }
-            if (le.stats.stunDur) {
+            if (!parried && le.stats.stunDur) {
                 const dur = le.stats.stunDur * this._elementResist(target, 'shock');
                 target.stunTimer = Math.max(target.stunTimer, dur);
                 if (isPlayerOwned && this.stats) this.stats.recordStunFreeze();
@@ -1398,6 +1409,27 @@ class Combat {
     // Hit-stop: freeze gameplay for a few frames on impact
     hitStop(ms) {
         this.hitStopTimer = Math.max(this.hitStopTimer, ms);
+    }
+
+    // Parry success handling — call after any takeDamage on a fighter
+    _checkParry(fighter) {
+        if (!fighter.parrySuccess) return false;
+        fighter.parrySuccess = false;
+        // Stamina reward
+        fighter.stamina = Math.min(fighter.maxStamina, fighter.stamina + CONFIG.PARRY_STAMINA_REWARD);
+        // Stats
+        if (this.stats && fighter === this.player) this.stats.recordParry();
+        // Effects: blue flash, burst, text, hit-stop
+        this.effects.burst(fighter.cx, fighter.cy, '#44bbff', 16, 6, 500, 6, { round: true, glow: true, fadeSize: true });
+        this.effects.burst(fighter.cx, fighter.cy, '#ffffff', 8, 8, 250, 3, { spark: true });
+        this.effects.flashes.push({ x: fighter.cx, y: fighter.cy, r: 40, life: 250, maxLife: 250, color: '#44bbff' });
+        this.effects.statusText(fighter.cx, fighter.y - 20, 'PARRY!', '#44bbff');
+        this.effects.shake(80, 3);
+        this.hitStop(CONFIG.PARRY_HITSTOP);
+        AudioEngine.playSfx('parry');
+        // Brief blue tint on the fighter (reuse hitFlash with a flag)
+        fighter.parryFlash = 300;
+        return true;
     }
 
     // Slow-motion: scale game speed for dramatic moments
@@ -1591,6 +1623,11 @@ class Combat {
                 }
                 if (this.input.wasPressed('ArrowUp')) lf.switchLane(-1);
                 if (this.input.wasPressed('ArrowDown')) lf.switchLane(1);
+                // Parry: tap forward opens a brief parry window
+                const fwdKey = this.isHost ? 'ArrowRight' : 'ArrowLeft';
+                if (this.input.wasPressed(fwdKey)) {
+                    lf.parryWindow = CONFIG.PARRY_WINDOW;
+                }
             }
         } else {
             // Single player: normal movement
@@ -1611,6 +1648,10 @@ class Combat {
                 if (this.input.isDown('ArrowRight')) {
                     // Forward: full speed
                     p.x = Math.min(CONFIG.MIDPOINT - CONFIG.SPRITE - 5, p.x + p.speed * (dt / 16));
+                }
+                // Parry: tap forward opens a brief parry window (Third Strike style)
+                if (this.input.wasPressed('ArrowRight')) {
+                    p.parryWindow = CONFIG.PARRY_WINDOW;
                 }
                 if (this.input.wasPressed('ArrowUp')) {
                     const dodged = this._hasIncomingProjectile(p.lane);
@@ -1704,19 +1745,21 @@ class Combat {
                         // HP damage from backline projectile
                         const hpDmg = Math.max(1, Math.ceil(proj.dmg * 0.5));
                         victim.takeDamage(hpDmg, this.effects);
-                        // Loyalty penalty
-                        const loyDrop = 1;
-                        victim.loyalty -= loyDrop;
-                        if (victim.loyalty < 0) victim.loyalty = 0;
-                        victim.loyHitFlash = 300;
-                        // Flash the side panel
-                        if (victim === this.player) this._panelFlashL = 400;
-                        else this._panelFlashR = 400;
-                        this.effects.statusText(
-                            proj.dirX > 0 ? CONFIG.FIELD_RIGHT - 30 : CONFIG.FIELD_LEFT + 30,
-                            CONFIG.FIELD_TOP + proj.lane * CONFIG.LANE_HEIGHT + CONFIG.LANE_HEIGHT / 2,
-                            '-' + hpDmg + ' HP  -' + loyDrop + ' LOY', CONFIG.C.LOYALTY
-                        );
+                        if (!this._checkParry(victim)) {
+                            // Loyalty penalty
+                            const loyDrop = 1;
+                            victim.loyalty -= loyDrop;
+                            if (victim.loyalty < 0) victim.loyalty = 0;
+                            victim.loyHitFlash = 300;
+                            // Flash the side panel
+                            if (victim === this.player) this._panelFlashL = 400;
+                            else this._panelFlashR = 400;
+                            this.effects.statusText(
+                                proj.dirX > 0 ? CONFIG.FIELD_RIGHT - 30 : CONFIG.FIELD_LEFT + 30,
+                                CONFIG.FIELD_TOP + proj.lane * CONFIG.LANE_HEIGHT + CONFIG.LANE_HEIGHT / 2,
+                                '-' + hpDmg + ' HP  -' + loyDrop + ' LOY', CONFIG.C.LOYALTY
+                            );
+                        }
                     }
                 }
 
@@ -1953,6 +1996,11 @@ class Combat {
             const spell = SPELL_DATA[proj.comboKey];
             const dmg = this._calcDamage(proj.dmg, isPlayerProj ? this.player : this.enemy, target, spell);
             target.takeDamage(dmg, this.effects, isPlayerProj ? this.player : this.enemy);
+            if (this._checkParry(target)) {
+                proj.hitSomething = true;
+                if (!proj.isPiercing) proj.alive = false;
+                return;
+            }
             const projPushDir = proj.dirX;
             target.pushbackVel = projPushDir * (target.blocking ? 1.5 : dmg * 0.8 + 1.5);
             if (!proj.hitSomething && this.stats) {
@@ -2228,18 +2276,29 @@ class Combat {
         // Hit main target if in bounds
         if (inBounds(target)) {
             laneHits++;
+            let parried = false;
             if (le.type === 'burn' && le.stats.dmg) {
                 const resist = this._elementResist(target, 'fire');
                 target.takeDamage(Math.max(1, Math.ceil(le.stats.dmg * resist)), this.effects, null);
-                const lanePushDir = le.owner === 'player' ? 1 : -1;
-                target.pushbackVel = lanePushDir * (target.blocking ? 1 : 1.5);
+                parried = this._checkParry(target);
+                if (!parried) {
+                    const lanePushDir = le.owner === 'player' ? 1 : -1;
+                    target.pushbackVel = lanePushDir * (target.blocking ? 1 : 1.5);
+                }
             }
-            if (le.type === 'freeze' && le.stats.freezeDur) {
-                const dur = le.stats.freezeDur * this._elementResist(target, 'ice');
-                target.freezeTimer = Math.max(target.freezeTimer, dur);
+            if (!parried && le.type === 'freeze' && le.stats.freezeDur) {
+                // Pure freeze (no dmg) — check parry manually
+                if (target.parryWindow > 0 && target.owner === 'player') {
+                    target.parryWindow = 0;
+                    target.parrySuccess = true;
+                    parried = this._checkParry(target);
+                } else {
+                    const dur = le.stats.freezeDur * this._elementResist(target, 'ice');
+                    target.freezeTimer = Math.max(target.freezeTimer, dur);
+                }
             }
             // Apply burn DoT from vlane fire stats
-            if (le.stats.burnDmg && le.stats.burnDur) {
+            if (!parried && le.stats.burnDmg && le.stats.burnDur) {
                 const dur = le.stats.burnDur * this._elementResist(target, 'fire');
                 target.burnTimer = dur;
                 target.burnDmg = le.stats.burnDmg;

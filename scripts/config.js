@@ -49,6 +49,11 @@ const CONFIG = {
     BLOCK_REDUCTION: 0.75,       // 75% damage reduction
     BLOCK_STAMINA_COST: 5,       // stamina cost per hit blocked
 
+    // Parry (Third Strike style)
+    PARRY_WINDOW: 100,           // ms after tapping forward to parry
+    PARRY_STAMINA_REWARD: 15,    // stamina recovered on successful parry
+    PARRY_HITSTOP: 200,          // freeze-frame on parry (ms)
+
     // Loyalty drop per minion HP
     LOYALTY_PER_HP: 0.5,
 

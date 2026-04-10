@@ -107,6 +107,13 @@ const AudioEngine = (() => {
             _tone(1000, 0.06, 'square', 0.15);
             _tone(1500, 0.08, 'sine', 0.1);
         },
+        parry() {
+            // Third-Strike-style sharp percussive "thock"
+            _noise(0.04, 0.35);              // snappy attack pop
+            _tone(300, 0.05, 'square', 0.25); // low punch body
+            _tone(180, 0.06, 'sawtooth', 0.15); // sub thump
+            _tone(800, 0.03, 'square', 0.1);  // brief click edge
+        },
         deflect() {
             _tone(1200, 0.05, 'sine', 0.15);
             _tone(1800, 0.08, 'triangle', 0.12);

@@ -25,6 +25,7 @@ class PlayerStats {
             dodgedProjectiles: 0,
             laneEffectsPlaced: 0,
             stunsFrozes: 0,
+            parries: 0,
             endHpRatio: 0,
             endLoyaltyRatio: 0,
             enemyProjsFired: 0,
@@ -149,6 +150,7 @@ class PlayerStats {
         if (dodged) this._fight.dodgedProjectiles++;
     }
     recordStunFreeze() { this._fight.stunsFrozes++; }
+    recordParry() { this._fight.parries++; }
     recordSummonKill() { this._fight.summonKills++; }
     recordOwnSummonLost() { this._fight.ownSummonsLost++; }
     updateLanePeak(lane, count) {

@@ -29,6 +29,26 @@ function _drawWhiteFlash(ctx, drawFn, x, y, w, h, flashAlpha) {
     ctx.restore();
 }
 
+function _drawColorFlash(ctx, drawFn, x, y, w, h, flashAlpha, color) {
+    if (_flashCanvas.width < w + 4 || _flashCanvas.height < h + 4) {
+        _flashCanvas.width = Math.max(_flashCanvas.width, w + 4);
+        _flashCanvas.height = Math.max(_flashCanvas.height, h + 4);
+    }
+    _flashCtx.clearRect(0, 0, _flashCanvas.width, _flashCanvas.height);
+    _flashCtx.save();
+    _flashCtx.translate(-x, -y);
+    drawFn(_flashCtx);
+    _flashCtx.restore();
+    _flashCtx.globalCompositeOperation = 'source-atop';
+    _flashCtx.fillStyle = color;
+    _flashCtx.fillRect(0, 0, _flashCanvas.width, _flashCanvas.height);
+    _flashCtx.globalCompositeOperation = 'source-over';
+    ctx.save();
+    ctx.globalAlpha = flashAlpha;
+    ctx.drawImage(_flashCanvas, 0, 0, w + 4, h + 4, x, y, w + 4, h + 4);
+    ctx.restore();
+}
+
 // ---- Base Entity ----
 class Entity {
     constructor(x, lane, owner) {
@@ -76,6 +96,7 @@ class Fighter extends Entity {
         this.spellOnScreen = {};  // { comboKey: true } - limits one per combo
         this.color = owner === 'player' ? CONFIG.C.PLAYER : CONFIG.C.ENEMY;
         this.hitFlash = 0;
+        this.parryFlash = 0;
         // Trailing bar values (for damage ghost effect)
         this.trailHp = maxHp;
         this.trailLoyalty = maxLoyalty;
@@ -90,6 +111,10 @@ class Fighter extends Entity {
         // Blocking (retreat = guard)
         this.blocking = false;
         this.blockLocked = false; // true when blocking an immediate threat (no movement)
+
+        // Parry (Third Strike style — tap forward at the right moment)
+        this.parryWindow = 0;    // ms remaining in parry window after tapping forward
+        this.parrySuccess = false; // set true when a parry lands (read by combat loop)
 
         // Pushback velocity (pixels/frame, decays each frame)
         this.pushbackVel = 0;
@@ -110,6 +135,7 @@ class Fighter extends Entity {
         if (this.freezeTimer > 0) this.freezeTimer -= dt;
         if (this.hitFlash > 0) this.hitFlash -= dt;
         if (this.loyHitFlash > 0) this.loyHitFlash -= dt;
+        if (this.parryFlash > 0) this.parryFlash -= dt;
 
         // Trailing bars — hold 400ms then decay fast
         if (this.trailHp > this.hp) {
@@ -177,6 +203,9 @@ class Fighter extends Entity {
             this.stamina = Math.min(this.maxStamina, this.stamina + rate * dt / 1000);
         }
 
+        // Parry window decay
+        if (this.parryWindow > 0) this.parryWindow -= dt;
+
         // Pushback slide
         if (this.pushbackVel !== 0) {
             this.x += this.pushbackVel * (dt / 16);
@@ -225,6 +254,12 @@ class Fighter extends Entity {
         if (this.shielded) {
             if (effects) effects.statusText(this.cx, this.y - 10, 'BLOCKED', CONFIG.C.SHIELD);
             return 0;
+        }
+        // Parry — Third Strike style: tap forward negates ALL damage
+        if (this.parryWindow > 0 && this.owner === 'player') {
+            this.parryWindow = 0;
+            this.parrySuccess = true;
+            return 0; // combat.js reads parrySuccess and triggers effects
         }
         // Blocking reduces damage and costs stamina
         if (this.blocking && this.stamina > 0) {
@@ -288,6 +323,15 @@ class Fighter extends Entity {
             _drawWhiteFlash(ctx, (offCtx) => {
                 Sprites.ninja(offCtx, self.x, drawY, CONFIG.SPRITE, self.color, self.facing, opts);
             }, this.x, drawY, CONFIG.SPRITE, CONFIG.SPRITE, flashAlpha);
+        }
+
+        // Blue flash overlay on parry — draws blue silhouette
+        if (this.parryFlash > 0) {
+            const pAlpha = Math.min(0.9, this.parryFlash / 300);
+            const self = this;
+            _drawColorFlash(ctx, (offCtx) => {
+                Sprites.ninja(offCtx, self.x, drawY, CONFIG.SPRITE, self.color, self.facing, opts);
+            }, this.x, drawY, CONFIG.SPRITE, CONFIG.SPRITE, pAlpha, '#44bbff');
         }
 
         ctx.globalAlpha = 1;
