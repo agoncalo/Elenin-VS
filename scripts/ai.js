@@ -25,6 +25,11 @@ class EnemyAI {
         this.comboDelay = 0;        // ms between combo casts
         this.comboCooldown = 0;     // time until next combo attempt
         this.trapIntent = false;    // wants to match player lane before laying hazard
+
+        // Lethal combo accumulation (difficulty >= 6)
+        this.savingForLethal = false;
+        this.lethalCombo = null;
+        this.lethalCheckTimer = 0;
     }
 
     update(dt, combat) {
@@ -73,6 +78,45 @@ class EnemyAI {
 
         // ----- Combo planning -----
         if (this.comboCooldown > 0) this.comboCooldown -= dt;
+
+        // ----- Lethal combo accumulation (difficulty >= 6) -----
+        // Hardest bosses analyze if they can save resources to end the game
+        if (this.difficulty >= 6) {
+            this.lethalCheckTimer -= dt;
+            if (this.lethalCheckTimer <= 0) {
+                this.lethalCheckTimer = 1500;
+                const lethal = this._assessLethalCombo(combat);
+                if (lethal) {
+                    this.lethalCombo = lethal.keys;
+                    this.savingForLethal = true;
+                } else {
+                    this.savingForLethal = false;
+                    this.lethalCombo = null;
+                }
+            }
+            if (this.savingForLethal && this.lethalCombo) {
+                const totalCost = this.lethalCombo.reduce((sum, key) =>
+                    sum + (SPELL_DATA[key]?.stats?.stamina || 0), 0);
+                if (f.stamina >= totalCost) {
+                    // Enough stamina — execute the kill combo
+                    const keys = [...this.lethalCombo];
+                    const first = keys.shift();
+                    const firstCost = SPELL_DATA[first]?.stats?.stamina || 0;
+                    if (f.canCast(first) && f.hasStamina(firstCost)) {
+                        f.spendStamina(firstCost);
+                        combat.executeSpell(first, f);
+                        this.comboQueue = keys;
+                        this.comboDelay = 300 + Math.random() * 150;
+                        this.comboCooldown = 4000;
+                    }
+                    this.savingForLethal = false;
+                    this.lethalCombo = null;
+                    return;
+                }
+                // Not enough stamina yet — hold off on casting, keep saving
+                return;
+            }
+        }
 
         // ----- Punish stunned/frozen player — immediate follow-up -----
         const player = combat.player;
@@ -963,5 +1007,184 @@ class EnemyAI {
             return scored[1].key;
         }
         return scored[0].key;
+    }
+
+    // ===== LETHAL COMBO ANALYSIS (difficulty >= 6) =====
+    // Evaluate whether a burst combo can finish the game right now
+    _assessLethalCombo(combat) {
+        const f = this.fighter;
+        const player = combat.player;
+        const pHP = player.hp;
+        const pLoy = player.loyalty;
+
+        // Posture check: how much are we winning by?
+        const ourStr = (f.hp / f.maxHp + f.loyalty / f.maxLoyalty) / 2;
+        const plrStr = (pHP / player.maxHp + pLoy / player.maxLoyalty) / 2;
+        const posture = ourStr - plrStr; // positive = we're ahead
+
+        // Lane defense coverage: are our backline lanes protected?
+        const coveredLanes = new Set();
+        combat.summons.forEach(s => {
+            if (s.alive && s.owner === 'enemy') s.getLanes().forEach(l => coveredLanes.add(l));
+        });
+        const wellDefended = coveredLanes.size >= 3;
+
+        // Determine kill range thresholds based on posture
+        // On advantage with defended lanes: accept wider kill range (up to 55%)
+        // On advantage without defense: moderate range (45%)
+        // Neutral/losing: only when player is critically low (35%)
+        let killThreshold;
+        if (posture > 0.12 && wellDefended) {
+            killThreshold = 0.55; // safe to be patient and accumulate
+        } else if (posture > 0.12) {
+            killThreshold = 0.45; // ahead but exposed, moderate patience
+        } else {
+            killThreshold = 0.35; // not ahead, only go for guaranteed kills
+        }
+
+        if (pHP > player.maxHp * killThreshold && pLoy > player.maxLoyalty * killThreshold) return null;
+
+        const enchBonus = f.enchant ? (f.enchant.bonusDmg || 0) : 0;
+
+        // Assess player summon situation for loyalty planning
+        const playerSummons = combat.summons.filter(s => s.alive && s.owner === 'player');
+        const totalSummonLoyVal = playerSummons.reduce((sum, s) => sum + (s.loyaltyVal || 0), 0);
+        // Lanes with no player summon or player blocking = unguarded backline
+        const summonLanes = new Set();
+        playerSummons.forEach(s => s.getLanes().forEach(l => summonLanes.add(l)));
+
+        // Gather spell candidates with estimated damage values
+        const candidates = [];
+        for (const key of this.spells) {
+            const spell = SPELL_DATA[key];
+            if (!spell) continue;
+            const stats = spell.stats;
+            const cost = stats.stamina || 0;
+
+            let hpDmg = 0;
+            let loyDmg = 0;
+            let cc = stats.stunDur || stats.freezeDur || 0;
+
+            switch (spell.type) {
+                case 'instant':
+                    hpDmg = (stats.dmg || 0) + enchBonus;
+                    // Slash can kill summons in range — estimate loyalty from weak summons
+                    for (const s of playerSummons) {
+                        if (s.hp <= (stats.dmg || 0) + enchBonus) loyDmg += s.loyaltyVal || 0;
+                    }
+                    break;
+                case 'projectile':
+                    if (stats.dmg > 0) hpDmg = stats.dmg + enchBonus;
+                    // Projectile in unguarded lane = guaranteed backline hit
+                    if (!summonLanes.has(f.lane) && f.lane !== player.lane) loyDmg += 1;
+                    // Piercing projectiles can kill weak summons AND hit backline
+                    if (stats.pierce) {
+                        for (const s of playerSummons) {
+                            if (s.getLanes().includes(f.lane) && s.hp <= (stats.dmg || 0) + enchBonus)
+                                loyDmg += s.loyaltyVal || 0;
+                        }
+                        if (!summonLanes.has(f.lane) || stats.pierce) loyDmg += 1;
+                    }
+                    break;
+                case 'lane':
+                    if (stats.dmg && stats.tickRate) {
+                        const ticks = Math.floor(stats.duration / stats.tickRate);
+                        hpDmg = ticks * stats.dmg;
+                        // Lane effects burn through summons in the same lane
+                        for (const s of playerSummons) {
+                            if (s.getLanes().includes(f.lane) && s.hp <= ticks * stats.dmg)
+                                loyDmg += s.loyaltyVal || 0;
+                        }
+                    }
+                    break;
+                case 'vlane':
+                    if (stats.dmg && stats.tickRate) {
+                        const ticks = Math.floor(stats.duration / stats.tickRate);
+                        hpDmg = ticks * stats.dmg;
+                        // Vlane hits all summons across the vertical strip
+                        for (const s of playerSummons) {
+                            if (s.hp <= ticks * stats.dmg)
+                                loyDmg += s.loyaltyVal || 0;
+                        }
+                    }
+                    break;
+                case 'aoe':
+                    hpDmg = stats.dmg || 0;
+                    // AOEs hit all enemy summons — estimate kills on weak ones
+                    for (const s of playerSummons) {
+                        if (s.hp <= (stats.dmg || 0))
+                            loyDmg += s.loyaltyVal || 0;
+                    }
+                    break;
+                default:
+                    continue; // skip summon, enchant, defensive for kill combos
+            }
+
+            if (hpDmg > 0 || loyDmg > 0 || cc > 0)
+                candidates.push({ key, cost, hpDmg, loyDmg, cc });
+        }
+
+        if (candidates.length === 0) return null;
+
+        // Try HP kill combo
+        if (pHP <= player.maxHp * 0.35) {
+            const combo = this._buildLethalSequence(candidates, pHP, 'hp', f.maxStamina);
+            if (combo) return combo;
+        }
+
+        // Try loyalty kill combo
+        if (pLoy <= player.maxLoyalty * 0.35) {
+            const combo = this._buildLethalSequence(candidates, pLoy, 'loyalty', f.maxStamina);
+            if (combo) return combo;
+        }
+
+        return null;
+    }
+
+    _buildLethalSequence(candidates, target, mode, maxStamina) {
+        // Sort: CC openers first (guarantee follow-up hits), then by damage efficiency
+        const sorted = [...candidates].sort((a, b) => {
+            if (a.cc > 0 && b.cc === 0) return -1;
+            if (b.cc > 0 && a.cc === 0) return 1;
+            const aDmg = mode === 'hp' ? a.hpDmg : a.loyDmg;
+            const bDmg = mode === 'hp' ? b.hpDmg : b.loyDmg;
+            return (bDmg / Math.max(1, b.cost)) - (aDmg / Math.max(1, a.cost));
+        });
+
+        const keys = [];
+        let totalDmg = 0;
+        let totalCost = 0;
+
+        // Add a CC opener if available (stun/freeze guarantees the burst lands)
+        for (const c of sorted) {
+            if (c.cc > 0 && totalCost + c.cost <= maxStamina) {
+                keys.push(c.key);
+                totalCost += c.cost;
+                totalDmg += mode === 'hp' ? c.hpDmg : c.loyDmg;
+                break;
+            }
+        }
+
+        // Fill with damage dealers until total exceeds kill threshold
+        for (const c of sorted) {
+            if (keys.includes(c.key)) continue;
+            const dmg = mode === 'hp' ? c.hpDmg : c.loyDmg;
+            if (dmg <= 0) continue;
+            if (totalCost + c.cost > maxStamina) continue;
+
+            keys.push(c.key);
+            totalCost += c.cost;
+            totalDmg += dmg;
+
+            if (totalDmg >= target) break;
+            if (keys.length >= 5) break;
+        }
+
+        // Only return if the combo can actually secure the kill
+        if (totalDmg >= target && keys.length >= 2) {
+            return { keys, cost: totalCost, dmg: totalDmg };
+        }
+
+        return null;
     }
 }
