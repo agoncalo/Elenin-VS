@@ -108,11 +108,14 @@ const AudioEngine = (() => {
             _tone(1500, 0.08, 'sine', 0.1);
         },
         parry() {
-            // Third-Strike-style sharp percussive "thock"
-            _noise(0.04, 0.35);              // snappy attack pop
-            _tone(300, 0.05, 'square', 0.25); // low punch body
-            _tone(180, 0.06, 'sawtooth', 0.15); // sub thump
-            _tone(800, 0.03, 'square', 0.1);  // brief click edge
+            // Third-Strike-style scratchy metallic parry slap
+            _noise(0.06, 0.4);               // longer gritty noise burst
+            _noise(0.025, 0.3);              // layered scratch transient
+            _tone(260, 0.05, 'square', 0.2); // low punch body
+            _tone(180, 0.06, 'sawtooth', 0.12); // sub thump
+            _tone(1100, 0.035, 'sawtooth', 0.18); // scratchy high edge
+            _tone(1400, 0.025, 'square', 0.14, 30); // detuned metallic bite
+            _tone(600, 0.04, 'sawtooth', 0.1);  // mid grit
         },
         deflect() {
             _tone(1200, 0.05, 'sine', 0.15);

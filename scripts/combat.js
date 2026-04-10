@@ -1742,24 +1742,19 @@ class Combat {
                                      || (proj.dirX < 0 && proj.x <= CONFIG.FIELD_LEFT + 10);
                     if (hitBackline) {
                         const victim = proj.dirX > 0 ? this.enemy : this.player;
-                        // HP damage from backline projectile
-                        const hpDmg = Math.max(1, Math.ceil(proj.dmg * 0.5));
-                        victim.takeDamage(hpDmg, this.effects);
-                        if (!this._checkParry(victim)) {
-                            // Loyalty penalty
-                            const loyDrop = 1;
-                            victim.loyalty -= loyDrop;
-                            if (victim.loyalty < 0) victim.loyalty = 0;
-                            victim.loyHitFlash = 300;
-                            // Flash the side panel
-                            if (victim === this.player) this._panelFlashL = 400;
-                            else this._panelFlashR = 400;
-                            this.effects.statusText(
-                                proj.dirX > 0 ? CONFIG.FIELD_RIGHT - 30 : CONFIG.FIELD_LEFT + 30,
-                                CONFIG.FIELD_TOP + proj.lane * CONFIG.LANE_HEIGHT + CONFIG.LANE_HEIGHT / 2,
-                                '-' + hpDmg + ' HP  -' + loyDrop + ' LOY', CONFIG.C.LOYALTY
-                            );
-                        }
+                        // Loyalty penalty only (no HP damage)
+                        const loyDrop = 1;
+                        victim.loyalty -= loyDrop;
+                        if (victim.loyalty < 0) victim.loyalty = 0;
+                        victim.loyHitFlash = 300;
+                        // Flash the side panel
+                        if (victim === this.player) this._panelFlashL = 400;
+                        else this._panelFlashR = 400;
+                        this.effects.statusText(
+                            proj.dirX > 0 ? CONFIG.FIELD_RIGHT - 30 : CONFIG.FIELD_LEFT + 30,
+                            CONFIG.FIELD_TOP + proj.lane * CONFIG.LANE_HEIGHT + CONFIG.LANE_HEIGHT / 2,
+                            '-' + loyDrop + ' LOY', CONFIG.C.LOYALTY
+                        );
                     }
                 }
 
