@@ -6,12 +6,10 @@ class RemoteInput {
     constructor() {
         this.keys = {};
         this.justPressed = {};
-        this.combo = [];
-        this.comboTimer = 0;
         this.onSpellCast = null;
-        this.locked = false;
-        this.lockTimer = 0;
+        this.lastDirection = null;
         this.lastCombo = [];
+        this.lastSpellKey = '';
         this.postCastTimer = 0;
         this.postCastMax = 0;
     }
@@ -28,7 +26,10 @@ class RemoteInput {
 
     // Called when we receive a cast message from the remote peer
     remoteCast(comboKey) {
-        this.lastCombo = comboKey.split('');
+        const lookup = typeof SPELL_INPUT_LOOKUP !== 'undefined' ? SPELL_INPUT_LOOKUP[comboKey] : null;
+        this.lastDirection = lookup ? lookup.dir : null;
+        this.lastCombo = lookup ? [lookup.k1, lookup.k2] : comboKey.split('');
+        this.lastSpellKey = comboKey;
         this.postCastMax = CONFIG.POST_CAST_COOLDOWN;
         this.postCastTimer = this.postCastMax;
         if (this.onSpellCast) this.onSpellCast(comboKey);
@@ -39,7 +40,9 @@ class RemoteInput {
             this.postCastTimer -= dt;
             if (this.postCastTimer <= 0) {
                 this.postCastTimer = 0;
+                this.lastDirection = null;
                 this.lastCombo = [];
+                this.lastSpellKey = '';
             }
         }
     }
@@ -54,16 +57,19 @@ class RemoteInput {
     reset() {
         this.keys = {};
         this.justPressed = {};
-        this.combo = [];
+        this.lastDirection = null;
         this.lastCombo = [];
+        this.lastSpellKey = '';
         this.postCastTimer = 0;
         this.postCastMax = 0;
         this.onSpellCast = null;
     }
 
     getCombo() {
-        if (this.postCastTimer > 0 && this.lastCombo.length === 3) return [...this.lastCombo];
-        return [];
+        if (this.postCastTimer > 0 && this.lastCombo.length === 2) {
+            return { direction: this.lastDirection, keys: [...this.lastCombo], spellKey: this.lastSpellKey };
+        }
+        return { direction: null, keys: [], spellKey: '' };
     }
 
     getPostCastProgress() {

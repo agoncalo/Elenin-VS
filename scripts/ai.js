@@ -847,6 +847,18 @@ class EnemyAI {
                 if (type === 'projectile' && f.lane === player.lane) score += 3;
             }
 
+            // === COUNTER EXPLOITATION: enemy whiffed, we have bonus damage window ===
+            if (f.counterWindow > 0) {
+                // Prioritize high-damage spells to maximize the 1.5x counter multiplier
+                if (stats.dmg && stats.dmg >= 5) score += 6;
+                else if (stats.dmg && stats.dmg >= 3) score += 4;
+                if (type === 'projectile' && f.lane === player.lane) score += 3;
+                if (type === 'instant') score += 3;
+                if (type === 'vlane') score += 2;
+                // Don't waste counter window on buffs/summons
+                if (type === 'enchant' || type === 'defensive' || type === 'summon') score -= 3;
+            }
+
             // === MULTI-TARGET LANE/VLANE: prefer hitting as many enemies as possible ===
             if (type === 'lane') {
                 let lanePopulation = (player.lane === f.lane) ? 1 : 0;

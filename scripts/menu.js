@@ -168,12 +168,26 @@ class SpellListScene {
                     'rgba(233,69,96,0.12)', CONFIG.C.ACCENT);
             }
 
-            // Combo keys
-            for (let k = 0; k < key.length; k++) {
-                ctx.fillStyle = orbColors[key[k]] || '#888';
+            // Combo keys (direction + 2 keys)
+            const dirSymbols = { forward: '→', back: '←', neutral: '·' };
+            const dirClr = { forward: '#44ee88', back: '#ee8844', neutral: '#8888aa' };
+            const lookup = typeof SPELL_INPUT_LOOKUP !== 'undefined' ? SPELL_INPUT_LOOKUP[key] : null;
+            if (lookup) {
                 ctx.font = menuFont('800', 14);
                 ctx.textAlign = 'left';
-                ctx.fillText(key[k], 55 + k * 16, y + 16);
+                ctx.fillStyle = dirClr[lookup.dir] || '#888';
+                ctx.fillText(dirSymbols[lookup.dir] || '?', 55, y + 16);
+                ctx.fillStyle = orbColors[lookup.k1] || '#888';
+                ctx.fillText(lookup.k1, 55 + 16, y + 16);
+                ctx.fillStyle = orbColors[lookup.k2] || '#888';
+                ctx.fillText(lookup.k2, 55 + 32, y + 16);
+            } else {
+                for (let k = 0; k < key.length; k++) {
+                    ctx.fillStyle = orbColors[key[k]] || '#888';
+                    ctx.font = menuFont('800', 14);
+                    ctx.textAlign = 'left';
+                    ctx.fillText(key[k], 55 + k * 16, y + 16);
+                }
             }
 
             // Spell name
@@ -542,15 +556,28 @@ class EnemySelectScene {
         sy += 4;
 
         const orbColors = { 'Z': CONFIG.C.ORB_Z, 'X': CONFIG.C.ORB_X, 'C': CONFIG.C.ORB_C };
+        const dirSyms = { forward: '→', back: '←', neutral: '·' };
+        const dirClrs = { forward: '#44ee88', back: '#ee8844', neutral: '#8888aa' };
         sel.spells.forEach((key, i) => {
             const spell = SPELL_DATA[key];
             if (!spell) return;
             sy += 16;
 
-            for (let k = 0; k < key.length; k++) {
-                ctx.fillStyle = orbColors[key[k]] || '#888';
+            const lookup = typeof SPELL_INPUT_LOOKUP !== 'undefined' ? SPELL_INPUT_LOOKUP[key] : null;
+            if (lookup) {
                 ctx.font = menuFont('800', 10);
-                ctx.fillText(key[k], sx + k * 11, sy);
+                ctx.fillStyle = dirClrs[lookup.dir] || '#888';
+                ctx.fillText(dirSyms[lookup.dir] || '?', sx, sy);
+                ctx.fillStyle = orbColors[lookup.k1] || '#888';
+                ctx.fillText(lookup.k1, sx + 11, sy);
+                ctx.fillStyle = orbColors[lookup.k2] || '#888';
+                ctx.fillText(lookup.k2, sx + 22, sy);
+            } else {
+                for (let k = 0; k < key.length; k++) {
+                    ctx.fillStyle = orbColors[key[k]] || '#888';
+                    ctx.font = menuFont('800', 10);
+                    ctx.fillText(key[k], sx + k * 11, sy);
+                }
             }
 
             ctx.fillStyle = AFFINITY_COLORS[spell.affinity] || '#aaa';
@@ -753,7 +780,7 @@ class HowToPlayScene {
                 lines: [
                     { icon: '←→', text: 'Move left/right with Arrow Keys' },
                     { icon: '↑↓', text: 'Switch lanes with Up/Down Arrows' },
-                    { icon: 'ZXC', text: 'Cast spells by pressing 3-key combos' },
+                    { icon: 'ZXC', text: 'Hold a direction + press 2 keys to cast' },
                     { icon: '', text: '' },
                     { icon: '♥', text: 'Reduce enemy HP to 0 to win' },
                     { icon: '★', text: 'Or break their Loyalty to 0' },
@@ -763,22 +790,22 @@ class HowToPlayScene {
             {
                 title: 'SPELLS',
                 lines: [
-                    { icon: 'Z..', text: 'Z-starters: Physical attacks & utility' },
-                    { icon: 'X..', text: 'X-starters: Magic attacks & lane control' },
-                    { icon: 'C..', text: 'C-starters: Summon creatures to fight' },
+                    { icon: '→', text: 'Forward + keys: Physical / Lane / VLane' },
+                    { icon: '←', text: 'Back + keys: Defensive / Enchant / Summon' },
+                    { icon: '·', text: 'Neutral + keys: Magic / Support / Birds' },
                     { icon: '', text: '' },
-                    { icon: '⚔', text: 'ZZX Sword Slash - instant, high damage' },
-                    { icon: '🔥', text: 'XXX Inferno Path - burns enemy lane' },
-                    { icon: '❄', text: 'XXZ Frostbite Path - freezes enemy lane' },
-                    { icon: '⚡', text: 'XCC Thunder Wrath - stuns all enemies' },
+                    { icon: '⚔', text: '→ZX Sword Slash - instant, high damage' },
+                    { icon: '🔥', text: '→XX Inferno Path - burns enemy lane' },
+                    { icon: '❄', text: '→XZ Frostbite Path - freezes enemy lane' },
+                    { icon: '⚡', text: '→CC Thunder Wrath - stuns all enemies' },
                 ],
             },
             {
                 title: 'STRATEGY',
                 lines: [
-                    { icon: '🛡', text: 'ZCZ Shield blocks all damage briefly' },
-                    { icon: '👻', text: 'ZCX Mistveil makes you invisible' },
-                    { icon: '🔄', text: 'ZCC Deflection reflects projectiles back' },
+                    { icon: '🛡', text: '←ZZ Shield blocks all damage briefly' },
+                    { icon: '👻', text: '←ZX Mistveil makes you invisible' },
+                    { icon: '🔄', text: '←ZC Deflection reflects projectiles back' },
                     { icon: '', text: '' },
                     { icon: '✨', text: 'Enchantments buff your next attacks' },
                     { icon: '🎯', text: 'Switch lanes to dodge incoming attacks' },
@@ -868,12 +895,16 @@ class HowToPlayScene {
             ctx.fillStyle = '#667788';
             ctx.font = menuFont('400', 13);
             ctx.textAlign = 'center';
-            ctx.fillText('Press Z, X, C in any combination of 3 to cast a spell!', CONFIG.WIDTH / 2, panelY + 22);
-            // Example orbs
-            const orbColors = [CONFIG.C.ORB_Z, CONFIG.C.ORB_X, CONFIG.C.ORB_C];
-            const orbLabels = ['Z', 'X', 'C'];
-            for (let i = 0; i < 3; i++) {
-                const ox = CONFIG.WIDTH / 2 - 30 + i * 30;
+            ctx.fillText('Hold →/← + press 2 keys (Z, X, C) to cast!', CONFIG.WIDTH / 2, panelY + 22);
+            // Example: direction arrow + 2 orbs
+            const dirX = CONFIG.WIDTH / 2 - 40;
+            ctx.font = menuFont('700', 18);
+            ctx.fillStyle = '#44ee88';
+            ctx.fillText('→', dirX, panelY + 42);
+            const orbColors = [CONFIG.C.ORB_Z, CONFIG.C.ORB_X];
+            const orbLabels = ['Z', 'X'];
+            for (let i = 0; i < 2; i++) {
+                const ox = CONFIG.WIDTH / 2 - 10 + i * 30;
                 ctx.beginPath();
                 ctx.arc(ox, panelY + 40, 8, 0, Math.PI * 2);
                 ctx.fillStyle = orbColors[i];
@@ -1122,16 +1153,10 @@ class StatsScene {
         }
         favSpells.forEach((s, i) => {
             const sy = ry + 142 + i * 24;
-            // Combo key colored
-            const combo = s.key;
             let kx = rx;
             ctx.font = menuFont('700', 13);
-            for (let c = 0; c < combo.length; c++) {
-                const ch = combo[c];
-                ctx.fillStyle = ch === 'Z' ? CONFIG.C.ORB_Z : ch === 'X' ? CONFIG.C.ORB_X : CONFIG.C.ORB_C;
-                ctx.fillText(ch, kx, sy);
-                kx += 12;
-            }
+            this._drawInputLabel(ctx, s.key, kx, sy);
+            kx += 42;
             ctx.fillStyle = '#ccddee';
             ctx.font = menuFont('400', 13);
             ctx.fillText(s.name + '  ×' + s.count, kx + 6, sy);
@@ -1150,15 +1175,10 @@ class StatsScene {
         }
         favSummons.forEach((s, i) => {
             const sy = sumY + 22 + i * 24;
-            const combo = s.key;
             let kx = rx;
             ctx.font = menuFont('700', 13);
-            for (let c = 0; c < combo.length; c++) {
-                const ch = combo[c];
-                ctx.fillStyle = ch === 'Z' ? CONFIG.C.ORB_Z : ch === 'X' ? CONFIG.C.ORB_X : CONFIG.C.ORB_C;
-                ctx.fillText(ch, kx, sy);
-                kx += 12;
-            }
+            this._drawInputLabel(ctx, s.key, kx, sy);
+            kx += 42;
             ctx.fillStyle = '#ccddee';
             ctx.font = menuFont('400', 13);
             ctx.fillText(s.name + '  ×' + s.count, kx + 6, sy);
@@ -1307,6 +1327,26 @@ class StatsScene {
             ctx.textAlign = 'left';
             y += 22;
         });
+    }
+
+    _drawInputLabel(ctx, spellKey, x, y) {
+        const dirSymbols = { forward: '→', back: '←', neutral: '·' };
+        const dirClr = { forward: '#44ee88', back: '#ee8844', neutral: '#8888aa' };
+        const lookup = typeof SPELL_INPUT_LOOKUP !== 'undefined' ? SPELL_INPUT_LOOKUP[spellKey] : null;
+        if (lookup) {
+            ctx.fillStyle = dirClr[lookup.dir] || '#888';
+            ctx.fillText(dirSymbols[lookup.dir] || '?', x, y);
+            ctx.fillStyle = lookup.k1 === 'Z' ? CONFIG.C.ORB_Z : lookup.k1 === 'X' ? CONFIG.C.ORB_X : CONFIG.C.ORB_C;
+            ctx.fillText(lookup.k1, x + 14, y);
+            ctx.fillStyle = lookup.k2 === 'Z' ? CONFIG.C.ORB_Z : lookup.k2 === 'X' ? CONFIG.C.ORB_X : CONFIG.C.ORB_C;
+            ctx.fillText(lookup.k2, x + 28, y);
+        } else {
+            for (let c = 0; c < spellKey.length; c++) {
+                const ch = spellKey[c];
+                ctx.fillStyle = ch === 'Z' ? CONFIG.C.ORB_Z : ch === 'X' ? CONFIG.C.ORB_X : CONFIG.C.ORB_C;
+                ctx.fillText(ch, x + c * 12, y);
+            }
+        }
     }
 
     _getStyleLabel(style) {

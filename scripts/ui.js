@@ -425,15 +425,20 @@ const UI = {
     },
 
     // Draw the combo orb display (overlaid at bottom-center of field)
+    // combo = { direction, keys[], spellKey }
     drawComboOrbs(ctx, combo, postCastProgress) {
         const cx = CONFIG.WIDTH / 2;
         const cy = CONFIG.FIELD_BOTTOM - 30;
         const orbR = 14;
         const spacing = 44;
         const colors = { 'Z': CONFIG.C.ORB_Z, 'X': CONFIG.C.ORB_X, 'C': CONFIG.C.ORB_C };
+        const dirSymbols = { forward: '→', back: '←', neutral: '·' };
+        const dirColors = { forward: '#44ee88', back: '#ee8844', neutral: '#8888aa' };
         const isCooling = postCastProgress > 0;
+        const dir = combo.direction;
+        const keys = combo.keys;
 
-        // Compact background pill
+        // Compact background pill (direction + 2 orbs)
         Sprites.roundRect(ctx, cx - 78, cy - 22, 156, 44, 10, 'rgba(0,0,0,0.5)', 'rgba(255,255,255,0.06)');
 
         // Post-cast cooldown sweep bar behind orbs
@@ -445,10 +450,28 @@ const UI = {
             ctx.restore();
         }
 
-        for (let i = 0; i < 3; i++) {
-            const ox = cx + (i - 1) * spacing;
-            const filled = i < combo.length;
-            const orbColor = filled ? colors[combo[i]] : null;
+        // Direction indicator (left slot)
+        const dirX = cx - spacing;
+        if (dir) {
+            ctx.save();
+            if (isCooling) ctx.globalAlpha = 0.35 + postCastProgress * 0.6;
+            ctx.font = this.font('700', 20);
+            ctx.textAlign = 'center';
+            ctx.fillStyle = dirColors[dir] || '#888';
+            ctx.fillText(dirSymbols[dir] || '?', dirX, cy + 7);
+            ctx.restore();
+        } else {
+            ctx.font = this.font('700', 20);
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#333';
+            ctx.fillText('·', dirX, cy + 7);
+        }
+
+        // Two orb slots
+        for (let i = 0; i < 2; i++) {
+            const ox = cx + i * spacing;
+            const filled = i < keys.length;
+            const orbColor = filled ? colors[keys[i]] : null;
 
             if (isCooling && filled) {
                 ctx.save();
@@ -466,7 +489,7 @@ const UI = {
                 ctx.save();
                 if (isCooling) ctx.globalAlpha = 0.3 + postCastProgress * 0.6;
                 ctx.fillStyle = orbColor;
-                ctx.fillText(combo[i], ox, cy + orbR + 10);
+                ctx.fillText(keys[i], ox, cy + orbR + 10);
                 ctx.restore();
             } else {
                 ctx.fillStyle = '#444';
@@ -475,39 +498,40 @@ const UI = {
         }
 
         // Slot machine hint strip centered above the orbs
-        if (!isCooling) {
-            const depth = combo.length;
-            if (depth < 3) {
-                const prefix = combo.join('');
-                const keys = ['Z', 'X', 'C'];
+        if (!isCooling && dir && keys.length < 2) {
+            const spellKeys = ['Z', 'X', 'C'];
+            const map = typeof DIRECTION_SPELL_MAP !== 'undefined' ? DIRECTION_SPELL_MAP : null;
 
-                const slotW = 34;
-                const slotH = 20;
-                const slotGap = 2;
-                const totalW = slotW * 3 + slotGap * 2;
-                const sx = cx - totalW / 2;
-                const sy = cy - orbR - 26;
+            const slotW = 34;
+            const slotH = 20;
+            const slotGap = 2;
+            const totalW = slotW * 3 + slotGap * 2;
+            const sx = cx - totalW / 2;
+            const sy = cy - orbR - 26;
 
-                // Slot background pill
-                Sprites.roundRect(ctx, sx - 2, sy - 1, totalW + 4, slotH + 2, 5, 'rgba(0,0,0,0.45)', 'rgba(255,255,255,0.06)');
+            Sprites.roundRect(ctx, sx - 2, sy - 1, totalW + 4, slotH + 2, 5, 'rgba(0,0,0,0.45)', 'rgba(255,255,255,0.06)');
 
-                for (let k = 0; k < 3; k++) {
-                    const comboKey = prefix + keys[k].repeat(3 - depth);
-                    const lx = sx + k * (slotW + slotGap) + slotW / 2;
-                    const ly = sy + slotH / 2;
+            for (let k = 0; k < 3; k++) {
+                // Preview what each second key would produce
+                const first = keys[0];
+                const second = spellKeys[k];
+                const spellKey = map && first && map[dir] && map[dir][first] ? map[dir][first][second] : null;
+                const lx = sx + k * (slotW + slotGap) + slotW / 2;
+                const ly = sy + slotH / 2;
 
-                    ctx.globalAlpha = 0.65;
-                    this.drawSpellIcon(ctx, lx, ly, comboKey);
-                    ctx.globalAlpha = 1;
+                ctx.globalAlpha = 0.65;
+                if (spellKey) {
+                    this.drawSpellIcon(ctx, lx, ly, spellKey);
                 }
+                ctx.globalAlpha = 1;
+            }
 
-                // Divider lines between slots
-                ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-                ctx.lineWidth = 1;
-                for (let d = 1; d < 3; d++) {
-                    const dx = sx + d * (slotW + slotGap) - slotGap / 2;
-                    ctx.beginPath(); ctx.moveTo(dx, sy + 2); ctx.lineTo(dx, sy + slotH - 2); ctx.stroke();
-                }
+            // Divider lines between slots
+            ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+            ctx.lineWidth = 1;
+            for (let d = 1; d < 3; d++) {
+                const dx = sx + d * (slotW + slotGap) - slotGap / 2;
+                ctx.beginPath(); ctx.moveTo(dx, sy + 2); ctx.lineTo(dx, sy + slotH - 2); ctx.stroke();
             }
         }
     },
@@ -691,24 +715,51 @@ const UI = {
         // Background pill
         Sprites.roundRect(ctx, px, py, 120, 24, 6, 'rgba(0,0,0,0.45)', 'rgba(255,255,255,0.04)');
 
-        // Combo keys (colored orbs)
+        // Direction + 2 key orbs
         const orbColors = { 'Z': CONFIG.C.ORB_Z, 'X': CONFIG.C.ORB_X, 'C': CONFIG.C.ORB_C };
-        const comboStr = lastSpell.comboKey;
-        for (let i = 0; i < comboStr.length; i++) {
-            const ch = comboStr[i];
-            const ox = px + 9 + i * 15;
-            const oy = py + 12;
-            // Small orb circle
-            ctx.fillStyle = orbColors[ch] || '#888';
-            ctx.beginPath();
-            ctx.arc(ox, oy, 5, 0, Math.PI * 2);
-            ctx.fill();
-            // Letter
-            ctx.fillStyle = '#fff';
-            ctx.font = this.font('800', 7);
+        const dirSymbols = { forward: '→', back: '←', neutral: '·' };
+        const dirColors = { forward: '#44ee88', back: '#ee8844', neutral: '#8888aa' };
+        const lookup = typeof SPELL_INPUT_LOOKUP !== 'undefined' ? SPELL_INPUT_LOOKUP[lastSpell.comboKey] : null;
+        const oy = py + 12;
+
+        if (lookup) {
+            // Direction arrow
+            ctx.fillStyle = dirColors[lookup.dir] || '#888';
+            ctx.font = this.font('700', 12);
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(ch, ox, oy + 1);
+            ctx.fillText(dirSymbols[lookup.dir] || '?', px + 9, oy);
+
+            // Two key orbs
+            const keyArr = [lookup.k1, lookup.k2];
+            for (let i = 0; i < 2; i++) {
+                const ch = keyArr[i];
+                const ox = px + 24 + i * 15;
+                ctx.fillStyle = orbColors[ch] || '#888';
+                ctx.beginPath();
+                ctx.arc(ox, oy, 5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.font = this.font('800', 7);
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(ch, ox, oy + 1);
+            }
+        } else {
+            const comboStr = lastSpell.comboKey;
+            for (let i = 0; i < comboStr.length; i++) {
+                const ch = comboStr[i];
+                const ox = px + 9 + i * 15;
+                ctx.fillStyle = orbColors[ch] || '#888';
+                ctx.beginPath();
+                ctx.arc(ox, oy, 5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.font = this.font('800', 7);
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(ch, ox, oy + 1);
+            }
         }
 
         // Spell name

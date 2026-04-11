@@ -118,6 +118,11 @@ class Fighter extends Entity {
 
         // Pushback velocity (pixels/frame, decays each frame)
         this.pushbackVel = 0;
+
+        // Dash (double-tap forward/backward)
+        this.dashTimer = 0;      // ms remaining in dash movement
+        this.dashDir = 0;        // -1 left, +1 right
+        this.dashCooldown = 0;   // ms before next dash allowed
     }
 
     update(dt) {
@@ -219,7 +224,30 @@ class Fighter extends Entity {
             this.pushbackVel *= 0.85;
             if (Math.abs(this.pushbackVel) < 0.1) this.pushbackVel = 0;
         }
+
+        // Dash slide
+        if (this.dashTimer > 0) {
+            this.dashTimer -= dt;
+            const dashSpeed = this.speed * 3.5;
+            this.x += this.dashDir * dashSpeed * (dt / 16);
+            if (this.owner === 'player') {
+                this.x = Math.max(CONFIG.FIELD_LEFT + 5, Math.min(CONFIG.MIDPOINT - CONFIG.SPRITE - 5, this.x));
+            } else {
+                this.x = Math.max(CONFIG.MIDPOINT + 10, Math.min(CONFIG.FIELD_RIGHT - CONFIG.SPRITE - 10, this.x));
+            }
+        }
+        if (this.dashCooldown > 0) this.dashCooldown -= dt;
     }
+
+    dash(dir) {
+        if (this.dashCooldown > 0 || this.dashTimer > 0 || this.isStunned()) return false;
+        this.dashDir = dir;
+        this.dashTimer = 120;     // 120ms dash duration
+        this.dashCooldown = 500;  // 500ms before next dash
+        return true;
+    }
+
+    get isDashing() { return this.dashTimer > 0; }
 
     switchLane(dir) {
         if (this.laneSwitching > 0) return;

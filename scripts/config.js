@@ -30,9 +30,9 @@ const CONFIG = {
     // Gameplay
     BASE_HP: 50,
     BASE_LOYALTY: 20,
-    PLAYER_SPEED: 3,
+    PLAYER_SPEED: 2.5,          // forward movement speed (pixels/frame)
     LANE_SWITCH_TIME: 150,       // ms to jump between lanes
-    SPELL_INPUT_TIMEOUT: 1500,   // ms to finish a 3-key combo
+    SPELL_INPUT_TIMEOUT: 800,    // ms to press 2nd key after 1st
     COMBO_LOCKOUT: 80,           // ms between key presses in a combo
     POST_CAST_COOLDOWN: 300,     // ms after casting (input clarity, stamina is the real throttle)
 
@@ -43,7 +43,7 @@ const CONFIG = {
     AI_STAMINA_REGEN: 22,        // AI regens faster
 
     // Movement
-    BACKWARD_SPEED: 0.55,        // backward movement multiplier (vs forward = 1.0)
+    BACKWARD_SPEED: 0.75,        // backward movement multiplier (vs forward = 1.0)
 
     // Blocking
     BLOCK_REDUCTION: 0.75,       // 75% damage reduction

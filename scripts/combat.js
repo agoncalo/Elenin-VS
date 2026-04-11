@@ -97,6 +97,22 @@ class Combat {
         this.slowMoTimer = 0;
         this.slowMoScale = 1;
 
+        // COUNTER system: whiffed offensive spells grant opponent a damage window
+        // counterWindow > 0 means this fighter's OPPONENT whiffed, so this fighter deals bonus dmg
+        this.player.counterWindow = 0;
+        this.enemy.counterWindow = 0;
+
+        // COMBO system: hit-chain tracking — consecutive hits on stunned/frozen targets escalate damage
+        // comboCount on the TARGET tracks how many consecutive hits they've taken while CC'd
+        this.player.comboCount = 0;
+        this.player.comboTimer = 0;  // resets if no hit lands within this window
+        this.enemy.comboCount = 0;
+        this.enemy.comboTimer = 0;
+
+        // Dash double-tap detection
+        this._lastTapRight = 0; // timestamp of last ArrowRight press
+        this._lastTapLeft = 0;  // timestamp of last ArrowLeft press
+
         // Battlefield theme based on enemy affinity
         this.theme = this._getTheme(this.netMode ? 'fire' : enemyData.affinity);
         this.ambientTimer = 0;
@@ -109,6 +125,12 @@ class Combat {
             // Host controls left (player), guest controls right (enemy)
             this.localFighter = this.isHost ? this.player : this.enemy;
             this.remoteFighter = this.isHost ? this.enemy : this.player;
+
+            // Configure direction keys for guest (flipped)
+            if (!this.isHost) {
+                this.input.forwardKey = 'ArrowLeft';
+                this.input.backKey = 'ArrowRight';
+            }
 
             this.remoteInput = new RemoteInput();
             this.remoteInput.onSpellCast = (key) => this._onRemoteCast(key);
@@ -273,6 +295,9 @@ class Combat {
         this.player.blocking = false;
         this.player.blockLocked = false;
         this.player.pushbackVel = 0;
+        this.player.counterWindow = 0;
+        this.player.comboCount = 0;
+        this.player.comboTimer = 0;
 
         this.enemy.hp = CONFIG.BASE_HP;
         this.enemy.loyalty = CONFIG.BASE_LOYALTY;
@@ -296,6 +321,9 @@ class Combat {
         this.enemy.blocking = false;
         this.enemy.blockLocked = false;
         this.enemy.pushbackVel = 0;
+        this.enemy.counterWindow = 0;
+        this.enemy.comboCount = 0;
+        this.enemy.comboTimer = 0;
 
         this.projectiles = [];
         this.summons = [];
@@ -304,6 +332,10 @@ class Combat {
         this._kanjiFloaters = [];
         this.lastSpell = null;
         this.enemyLastSpell = null;
+        this.player.comboCount = 0;
+        this.player.comboTimer = 0;
+        this.enemy.comboCount = 0;
+        this.enemy.comboTimer = 0;
         this.result = null;
         this.resultTimer = 0;
         this._rematchState = null;
@@ -361,6 +393,7 @@ class Combat {
         const range = (stats.range || 0.5) * CONFIG.FIELD_WIDTH;
         const isPlayer = caster.owner === 'player';
         const target = isPlayer ? this.enemy : this.player;
+        let hitAnything = false;
 
         // Visual
         this.effects.burst(caster.cx + (isPlayer ? 30 : -30), caster.cy, '#ffffff', 6, 5, 200, 3);
@@ -369,6 +402,7 @@ class Combat {
         if (target.lane === caster.lane) {
             const dist = Math.abs(target.cx - caster.cx);
             if (dist <= range) {
+                hitAnything = true;
                 const dmg = this._calcDamage(stats.dmg, caster, target, SPELL_DATA[comboKey]);
                 target.takeDamage(dmg, this.effects, caster);
                 if (!this._checkParry(target)) {
@@ -385,6 +419,7 @@ class Combat {
         enemySummons.forEach(s => {
             const dist = Math.abs(s.cx - caster.cx);
             if (dist <= range) {
+                hitAnything = true;
                 const sideFighter = s.owner === 'player' ? this.player : this.enemy;
                 if (sideFighter.invisible) return;
                 if (sideFighter.shielded) {
@@ -399,6 +434,9 @@ class Combat {
                 this._addCutLine(s.cx, s.cy);
             }
         });
+
+        // WHIFF: sword slash hit nothing
+        if (!hitAnything) this._grantCounter(caster);
 
         // Sword slash visual
         const slashX = caster.cx;
@@ -1375,12 +1413,77 @@ class Combat {
         this.effects.poofCloud(summon.cx, summon.cy, summon.twoLane ? 40 : 28);
     }
 
+    // ===== COMBO / COUNTER SYSTEMS =====
+
+    // Register a hit on a target for combo tracking
+    // Called from _calcDamage when damage is dealt to a fighter
+    _registerComboHit(target) {
+        // Combo chains: hitting a stunned/frozen target extends the combo
+        const isCC = target.isStunned();
+        if (isCC) {
+            target.comboCount++;
+            target.comboTimer = 2000; // 2s window to land next hit
+            if (target.comboCount >= 2) {
+                const label = 'COMBO x' + target.comboCount + '!';
+                const color = '#ffdd44';
+                this.effects.statusText(target.cx, target.y - 35, label, color);
+                this.effects.burst(target.cx, target.cy, color, 6 + target.comboCount * 2, 4, 300, 4,
+                    { round: true, glow: true, fadeSize: true });
+                if (target.comboCount >= 3) {
+                    this.effects.flashes.push({ x: target.cx, y: target.cy, r: 30, life: 250, maxLife: 250, color });
+                    this.effects.shake(80, 2 + target.comboCount);
+                }
+            }
+        } else {
+            // Not CC'd — first hit starts a potential combo but doesn't grant bonus yet
+            target.comboCount = 1;
+            target.comboTimer = 2000;
+        }
+    }
+
+    // Get combo damage multiplier for the current hit on a target
+    _getComboMult(target) {
+        if (target.comboCount < 2) return 1.0;
+        // x2 = 1.2x, x3 = 1.4x, x4 = 1.6x, capped at 2.0x
+        return Math.min(2.0, 1.0 + target.comboCount * 0.2);
+    }
+
+    // Grant counter window to the opponent of a whiffing fighter
+    _grantCounter(whiffer) {
+        const opponent = whiffer.owner === 'player' ? this.enemy : this.player;
+        opponent.counterWindow = 1500;
+        const ox = whiffer.cx;
+        const oy = whiffer.cy;
+        this.effects.statusText(ox, oy - 25, 'WHIFF!', '#ff8888');
+        // Show COUNTER on the opponent who benefits
+        this.effects.burst(opponent.cx, opponent.cy, '#ff4466', 8, 4, 350, 4, { round: true, glow: true, fadeSize: true });
+        this.effects.statusText(opponent.cx, opponent.y - 30, 'COUNTER!', '#ff4466');
+    }
+
     _calcDamage(baseDmg, attacker, target, spell) {
         let dmg = baseDmg;
 
         // Enchant bonus
         if (attacker.enchant) {
             dmg += attacker.enchant.bonusDmg;
+        }
+
+        // COUNTER bonus: attacker is in counter window (opponent whiffed)
+        if (attacker.counterWindow > 0) {
+            dmg = Math.ceil(dmg * 1.5);
+            attacker.counterWindow = 0; // consumed on first hit
+            this.effects.burst(target.cx, target.cy, '#ff4466', 10, 6, 400, 5, { round: true, glow: true, fadeSize: true });
+            this.effects.statusText(target.cx, target.y - 35, 'COUNTER!', '#ff4466');
+            this.hitStop(60);
+        }
+
+        // COMBO bonus: hitting stunned/frozen targets chains for escalating damage
+        if (target.hp != null && target.comboCount != null) {
+            this._registerComboHit(target);
+            const comboMult = this._getComboMult(target);
+            if (comboMult > 1.0) {
+                dmg = Math.ceil(dmg * comboMult);
+            }
         }
 
         // Elemental resistance — side's enchant halves matching element damage
@@ -1632,6 +1735,7 @@ class Combat {
         } else {
             // Single player: normal movement
             const p = this.player;
+            const isCasting = this.windups.some(w => w.caster === p && !w.executed);
             const holdingBack = this.input.isDown('ArrowLeft') && !p.isStunned();
             const threatNearby = holdingBack && this._hasImmediateThreat(p);
 
@@ -1639,15 +1743,41 @@ class Combat {
             p.blocking = holdingBack && threatNearby;
             p.blockLocked = p.blocking;
 
-            if (!p.isStunned()) {
-                if (holdingBack && !threatNearby) {
-                    // No threat: walk backward (slower)
-                    p.x = Math.max(CONFIG.FIELD_LEFT + 5, p.x - p.speed * CONFIG.BACKWARD_SPEED * (dt / 16));
+            if (!p.isStunned() && !isCasting) {
+                // Dash: double-tap forward or backward
+                if (this.input.wasPressed('ArrowRight') && !p.isDashing) {
+                    const now = Date.now();
+                    if (now - this._lastTapRight < 250) {
+                        if (p.dash(1)) {
+                            this.effects.burst(p.cx, p.cy, '#ffffff', 6, 4, 200, 3, { spark: true });
+                            this._lastTapRight = 0;
+                        }
+                    } else {
+                        this._lastTapRight = now;
+                    }
                 }
-                // Blocked players don't move — they plant and guard
-                if (this.input.isDown('ArrowRight')) {
-                    // Forward: full speed
-                    p.x = Math.min(CONFIG.MIDPOINT - CONFIG.SPRITE - 5, p.x + p.speed * (dt / 16));
+                if (this.input.wasPressed('ArrowLeft') && !p.isDashing) {
+                    const now = Date.now();
+                    if (now - this._lastTapLeft < 250) {
+                        if (p.dash(-1)) {
+                            this.effects.burst(p.cx, p.cy, '#ffffff', 6, 4, 200, 3, { spark: true });
+                            this._lastTapLeft = 0;
+                        }
+                    } else {
+                        this._lastTapLeft = now;
+                    }
+                }
+
+                if (!p.isDashing) {
+                    if (holdingBack && !threatNearby) {
+                        // No threat: walk backward (slower)
+                        p.x = Math.max(CONFIG.FIELD_LEFT + 5, p.x - p.speed * CONFIG.BACKWARD_SPEED * (dt / 16));
+                    }
+                    // Blocked players don't move — they plant and guard
+                    if (this.input.isDown('ArrowRight')) {
+                        // Forward: full speed
+                        p.x = Math.min(CONFIG.MIDPOINT - CONFIG.SPRITE - 5, p.x + p.speed * (dt / 16));
+                    }
                 }
                 // Parry: tap forward opens a brief parry window (Third Strike style)
                 if (this.input.wasPressed('ArrowRight')) {
@@ -1755,6 +1885,10 @@ class Combat {
                             CONFIG.FIELD_TOP + proj.lane * CONFIG.LANE_HEIGHT + CONFIG.LANE_HEIGHT / 2,
                             '-' + loyDrop + ' LOY', CONFIG.C.LOYALTY
                         );
+                    } else if (!proj.fromSummon) {
+                        // Projectile fizzled without hitting anything or reaching backline — WHIFF
+                        const casterFighter = proj.owner === 'player' ? this.player : this.enemy;
+                        this._grantCounter(casterFighter);
                     }
                 }
 
@@ -1852,6 +1986,28 @@ class Combat {
             this.enemyLastSpell.timer -= dt;
             if (this.enemyLastSpell.timer <= 0) this.enemyLastSpell = null;
         }
+
+        // Decay COUNTER window timers
+        if (this.player.counterWindow > 0) this.player.counterWindow -= dt;
+        if (this.enemy.counterWindow > 0) this.enemy.counterWindow -= dt;
+
+        // Decay COMBO hit-chain timers
+        [this.player, this.enemy].forEach(f => {
+            if (f.comboTimer > 0) {
+                f.comboTimer -= dt;
+                // Reset combo if timer expires or CC wears off
+                if (f.comboTimer <= 0 || !f.isStunned()) {
+                    if (f.comboCount >= 2 && !f.isStunned()) {
+                        // CC ended — combo drops
+                        f.comboCount = 0;
+                        f.comboTimer = 0;
+                    } else if (f.comboTimer <= 0) {
+                        f.comboCount = 0;
+                        f.comboTimer = 0;
+                    }
+                }
+            }
+        });
 
         // Win/lose check
         // In multiplayer, "win" means the remote fighter is depleted
@@ -2112,39 +2268,24 @@ class Combat {
 
                 // Collision! Determine type
                 const aIsPlayer = a.owner === 'player';
-
-                // Summon-vs-summon projectiles don't interact
-                if (a.fromSummon && b.fromSummon) continue;
-
-                const playerProj = aIsPlayer ? a : b;
-                const enemyProj = aIsPlayer ? b : a;
-
-                // Only main-cast projectiles destroy summon projectiles
-                const playerIsSummonProj = playerProj.fromSummon;
-                const enemyIsSummonProj = enemyProj.fromSummon;
-
                 const cx = (a.cx + b.cx) / 2;
                 const cy = (a.cy + b.cy) / 2;
 
-                if (enemyIsSummonProj && !playerIsSummonProj) {
-                    // Player main projectile destroys enemy summon projectile
+                const playerProj = aIsPlayer ? a : b;
+                const enemyProj = aIsPlayer ? b : a;
+                const playerIsSummonProj = playerProj.fromSummon;
+                const enemyIsSummonProj = enemyProj.fromSummon;
+
+                // Player main projectile overcomes enemy summon projectile
+                if (!playerIsSummonProj && enemyIsSummonProj) {
                     enemyProj.alive = false;
                     enemyProj.hitSomething = true;
                     this.effects.burst(cx, cy, '#ffaa44', 5, 3, 200, 3);
                     this.effects.statusText(cx, cy - 15, 'BLOCKED', '#ffcc66');
                     AudioEngine.playSfx('hit');
-                } else if (playerIsSummonProj && !enemyIsSummonProj) {
-                    // Enemy main projectile destroys player summon projectile
-                    playerProj.alive = false;
-                    playerProj.hitSomething = true;
-                    this.effects.burst(cx, cy, '#ffaa44', 5, 3, 200, 3);
-                    this.effects.statusText(cx, cy - 15, 'BLOCKED', '#ffcc66');
-                    AudioEngine.playSfx('hit');
-                } else if (playerIsSummonProj && enemyIsSummonProj) {
-                    // Both summon — already filtered above, but safety pass-through
-                    continue;
                 } else {
-                    // Two main projectiles cancel each other — fancy clash effect
+                    // Everything else cancels: main-vs-main, summon-vs-summon,
+                    // enemy main-vs-player summon — all clash and destroy both
                     a.alive = false;
                     b.alive = false;
                     a.hitSomething = true;
