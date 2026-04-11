@@ -173,7 +173,7 @@ const ENEMIES = [
     {
         id: 'tensei',
         name: 'Tensei', title: 'The Avatar', affinity: 'avatar',
-        spells: ['ZCZ','ZXZ','ZXC','XZZ','XXZ','XXC','XCZ','XCC','CXZ','CCZ','CCC'],
+        spells: ['ZCZ','XZZ','XXX','XXZ','XXC','XCX','XCZ','XCC','CZX','CZC','CXX','CCZ','CCC'],
         color: '#ffffff', aiSpeed: 1.0, castRate: 1400,
         stamina: 140, staminaRegen: 32,
         desc: 'Master of all elements. Fire, ice, thunder — nothing is beyond reach.',

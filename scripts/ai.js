@@ -202,6 +202,15 @@ class EnemyAI {
             return;
         }
 
+        // Loyalty-aware posture: if loyalty is low but HP is fine, stay back
+        // to intercept backline threats rather than pushing forward
+        // Hard bosses (difficulty >= 6) react earlier at 50%, others at 40%
+        const loyRetreatThresh = this.difficulty >= 6 ? 0.5 : 0.4;
+        if (this.tactical && loyPct < loyRetreatThresh && hpPct > 0.5) {
+            this.moveDir = 1; // retreat to cover more backline
+            return;
+        }
+
         // Tactical: advance when player is blocking — they can't move, pressure them
         if (this.tactical && playerBlocking && !playerStaLow && staPct > 0.3) {
             this.moveDir = -1; // advance to pressure blocker
@@ -236,13 +245,6 @@ class EnemyAI {
         // Retreat when being pushed back (ride the pushback rather than fight it)
         if (f.pushbackVel > 1) {
             this.moveDir = 0; // stand still, let pushback carry us
-            return;
-        }
-
-        // Loyalty-aware posture: if loyalty is low but HP is fine, stay back
-        // to intercept backline threats rather than pushing forward
-        if (this.tactical && loyPct < 0.4 && hpPct > 0.5) {
-            this.moveDir = 1; // retreat to cover more backline
             return;
         }
 
@@ -293,7 +295,9 @@ class EnemyAI {
         // Higher urgency when loyalty is low
         if (this.difficulty >= 2) {
             const loyPct = f.loyalty / f.maxLoyalty;
-            const interceptUrgency = loyPct < 0.35 ? 1.0 : (loyPct < 0.6 ? 0.7 : 0.4);
+            const urgLow  = this.difficulty >= 6 ? 0.45 : 0.35;
+            const urgMid  = this.difficulty >= 6 ? 0.7  : 0.6;
+            const interceptUrgency = loyPct < urgLow ? 1.0 : (loyPct < urgMid ? 0.7 : 0.4);
             const incoming = this._unguardedIncoming(combat);
             if (incoming !== null && incoming !== f.lane && !laneHazard && Math.random() < interceptUrgency) {
                 if (incoming > f.lane) f.switchLane(1);
@@ -753,7 +757,7 @@ class EnemyAI {
         const playerLoyPct = player.loyalty / player.maxLoyalty;
 
         // Resource posture flags
-        const loyaltyThreatened = loyPct < 0.4;          // our loyalty is low
+        const loyaltyThreatened = loyPct < (this.difficulty >= 6 ? 0.5 : 0.4); // our loyalty is low
         const hpThreatened = hpPct < 0.35;               // our HP is low
         const playerLoyaltyWeak = playerLoyPct < 0.35;   // player loyalty is exploitable
 
