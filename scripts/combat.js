@@ -113,6 +113,11 @@ class Combat {
         this._lastTapRight = 0; // timestamp of last ArrowRight press
         this._lastTapLeft = 0;  // timestamp of last ArrowLeft press
 
+        // Runes (field pickups)
+        this.runes = [];          // active rune objects
+        this._runeTimerPlayer = this._nextRuneDelay(); // ms until next player-side spawn
+        this._runeTimerEnemy  = this._nextRuneDelay(); // ms until next enemy-side spawn
+
         // Battlefield theme based on enemy affinity
         this.theme = this._getTheme(this.netMode ? 'fire' : enemyData.affinity);
         this.ambientTimer = 0;
@@ -465,7 +470,7 @@ class Combat {
 
     _startWindup(type, comboKey, caster, stats) {
         const dur = this._windupDuration(type);
-        this.windups.push({
+        const w = {
             type, comboKey, caster, stats,
             timer: dur, maxDuration: dur,
             executed: false,
@@ -474,7 +479,18 @@ class Combat {
             castLane: caster.lane,
             castX: caster.cx,
             castY: caster.cy,
-        });
+        };
+        // Vlane aiming: player controls the aim cursor during windup
+        if (type === 'vlane' && caster.owner === 'player') {
+            const isPlayer = true;
+            // Mirror: player frontline → enemy frontline, player backline → enemy backline
+            const playerDepth = (caster.cx - CONFIG.FIELD_LEFT) / (CONFIG.MIDPOINT - CONFIG.FIELD_LEFT); // 0=back, 1=front
+            const enemyMin = CONFIG.MIDPOINT + 40;
+            const enemyMax = CONFIG.FIELD_RIGHT - 10;
+            // Mirrored: player front (1) → enemy front (enemyMin), player back (0) → enemy back (enemyMax)
+            w.vlaneAimX = enemyMin + (1 - playerDepth) * (enemyMax - enemyMin);
+        }
+        this.windups.push(w);
     }
 
     _updateWindups(dt) {
@@ -488,6 +504,17 @@ class Combat {
             if (w.caster.hp <= 0) { w.executed = true; return; }
             // Close eyes during IAI windup
             if (w.type === 'instant') w.caster._eyesClosed = true;
+            // Vlane aiming: player adjusts aim during windup
+            if (w.vlaneAimX != null) {
+                const aimSpeed = 6 * (dt / 16); // higher sensitivity
+                if (this.input.isDown('ArrowRight')) {
+                    w.vlaneAimX += aimSpeed; // forward = push deeper into enemy side
+                }
+                if (this.input.isDown('ArrowLeft')) {
+                    w.vlaneAimX -= aimSpeed; // back = pull toward enemy frontline
+                }
+                w.vlaneAimX = Math.max(CONFIG.MIDPOINT + 40, Math.min(w.vlaneAimX, CONFIG.FIELD_RIGHT - 40));
+            }
             w.timer -= dt;
             if (w.timer <= 0) {
                 w.executed = true;
@@ -510,7 +537,7 @@ class Combat {
             case 'enchant':   this._applyEnchant(w.comboKey, w.caster, w.stats); break;
             case 'defensive': this._applyDefensive(w.comboKey, w.caster, w.stats); break;
             case 'lane':      this._spawnLaneEffect(w.comboKey, w.caster, w.stats); break;
-            case 'vlane':     this._spawnVLaneEffect(w.comboKey, w.caster, w.stats, w.castX); break;
+            case 'vlane':     this._spawnVLaneEffect(w.comboKey, w.caster, w.stats, w.vlaneAimX || w.castX); break;
             case 'summon':    this._spawnSummon(w.comboKey, w.caster, w.stats); break;
         }
         if (needsSnap) w.caster.lane = origLane;
@@ -1010,23 +1037,30 @@ class Combat {
         const isPlayer = c.owner === 'player';
         const t = Date.now();
 
-        // Project vlane into enemy's side — aim at enemy position
-        const cx0 = w.castX;
-        let targetX;
-        if (isPlayer) {
-            const forwardFrac = (cx0 - CONFIG.FIELD_LEFT) / (CONFIG.MIDPOINT - CONFIG.FIELD_LEFT);
-            const midTarget = CONFIG.MIDPOINT + 40;
-            const enemyTarget = this.enemy ? this.enemy.cx : midTarget;
-            targetX = midTarget + forwardFrac * (enemyTarget - midTarget);
+        // Project vlane into enemy's side — aim position
+        let clampedX;
+        if (w.vlaneAimX != null) {
+            // Player-aimed: use the live aim cursor
+            clampedX = w.vlaneAimX;
         } else {
-            const forwardFrac = (CONFIG.FIELD_RIGHT - cx0) / (CONFIG.FIELD_RIGHT - CONFIG.MIDPOINT);
-            const midTarget = CONFIG.MIDPOINT - 40;
-            const playerTarget = this.player ? this.player.cx : midTarget;
-            targetX = midTarget - forwardFrac * (midTarget - playerTarget);
+            // AI: calculate from caster position
+            const cx0 = w.castX;
+            let targetX;
+            if (isPlayer) {
+                const forwardFrac = (cx0 - CONFIG.FIELD_LEFT) / (CONFIG.MIDPOINT - CONFIG.FIELD_LEFT);
+                const midTarget = CONFIG.MIDPOINT + 40;
+                const enemyTarget = this.enemy ? this.enemy.cx : midTarget;
+                targetX = midTarget + forwardFrac * (enemyTarget - midTarget);
+            } else {
+                const forwardFrac = (CONFIG.FIELD_RIGHT - cx0) / (CONFIG.FIELD_RIGHT - CONFIG.MIDPOINT);
+                const midTarget = CONFIG.MIDPOINT - 40;
+                const playerTarget = this.player ? this.player.cx : midTarget;
+                targetX = midTarget - forwardFrac * (midTarget - playerTarget);
+            }
+            clampedX = isPlayer
+                ? Math.max(CONFIG.MIDPOINT + 40, Math.min(targetX, CONFIG.FIELD_RIGHT - 40))
+                : Math.max(CONFIG.FIELD_LEFT + 40, Math.min(targetX, CONFIG.MIDPOINT - 40));
         }
-        const clampedX = isPlayer
-            ? Math.max(CONFIG.MIDPOINT + 40, Math.min(targetX, CONFIG.FIELD_RIGHT - 10))
-            : Math.max(CONFIG.FIELD_LEFT + 10, Math.min(targetX, CONFIG.MIDPOINT - 40));
         const stripW = 80;
         const x = clampedX - stripW / 2;
         const y = CONFIG.FIELD_TOP;
@@ -1244,21 +1278,16 @@ class Combat {
         const typeMap = { fire: 'burn', ice: 'freeze', shock: 'shock' };
         const type = typeMap[spell.affinity] || 'burn';
 
-        // Target the enemy's current position on their side of the field
-        // AI tries to maximize entities caught in the 80px strip
-        const cx0 = snappedCX || caster.cx;
         const stripW = 80;
         let targetX;
+
         if (isPlayer) {
-            // Player casting: aim at enemy's x position on the right side
-            const enemy = this.enemy;
-            const forwardFrac = (cx0 - CONFIG.FIELD_LEFT) / (CONFIG.MIDPOINT - CONFIG.FIELD_LEFT);
-            const midTarget = CONFIG.MIDPOINT + 40;
-            const enemyTarget = enemy ? enemy.cx : midTarget;
-            targetX = midTarget + forwardFrac * (enemyTarget - midTarget);
+            // Player: snappedCX is the player-aimed position (vlaneAimX)
+            targetX = snappedCX || (CONFIG.MIDPOINT + CONFIG.FIELD_RIGHT) / 2;
         } else {
             // AI casting: find the X on the player's side that hits the most entities
             const player = this.player;
+            const cx0 = snappedCX || caster.cx;
             const forwardFrac = (CONFIG.FIELD_RIGHT - cx0) / (CONFIG.FIELD_RIGHT - CONFIG.MIDPOINT);
 
             // Collect all target X positions on the player's side
@@ -1293,8 +1322,8 @@ class Combat {
             }
         }
         const clampedX = isPlayer
-            ? Math.max(CONFIG.MIDPOINT + 40, Math.min(targetX, CONFIG.FIELD_RIGHT - 10))
-            : Math.max(CONFIG.FIELD_LEFT + 10, Math.min(targetX, CONFIG.MIDPOINT - 40));
+            ? Math.max(CONFIG.MIDPOINT + 40, Math.min(targetX, CONFIG.FIELD_RIGHT - 40))
+            : Math.max(CONFIG.FIELD_LEFT + 40, Math.min(targetX, CONFIG.MIDPOINT - 40));
 
         const le = new LaneEffect(-1, side, type, stats.duration, stats, caster.owner, 'vertical', clampedX);
         le.comboKey = comboKey;
@@ -1458,6 +1487,175 @@ class Combat {
         // Show COUNTER on the opponent who benefits
         this.effects.burst(opponent.cx, opponent.cy, '#ff4466', 8, 4, 350, 4, { round: true, glow: true, fadeSize: true });
         this.effects.statusText(opponent.cx, opponent.y - 30, 'COUNTER!', '#ff4466');
+    }
+
+    // ---- Rune system ----
+    _nextRuneDelay() {
+        return CONFIG.RUNE_SPAWN_MIN + Math.random() * (CONFIG.RUNE_SPAWN_MAX - CONFIG.RUNE_SPAWN_MIN);
+    }
+
+    _spawnRune(side) {
+        // Only one rune per side at a time
+        if (this.runes.some(r => r.side === side)) return;
+        const types = CONFIG.RUNE_TYPES;
+        const type = types[Math.floor(Math.random() * types.length)];
+        const lane = Math.floor(Math.random() * CONFIG.LANE_COUNT);
+        // X position: random within that side's half
+        const margin = 40;
+        let x;
+        if (side === 'player') {
+            x = CONFIG.FIELD_LEFT + margin + Math.random() * (CONFIG.MIDPOINT - CONFIG.FIELD_LEFT - margin * 2);
+        } else {
+            x = CONFIG.MIDPOINT + margin + Math.random() * (CONFIG.FIELD_RIGHT - CONFIG.MIDPOINT - margin * 2);
+        }
+        const y = CONFIG.FIELD_TOP + lane * CONFIG.LANE_HEIGHT + CONFIG.LANE_HEIGHT / 2;
+        this.runes.push({
+            side, type, lane, x, y,
+            telegraph: CONFIG.RUNE_TELEGRAPH,
+            lifetime: CONFIG.RUNE_LIFETIME,
+            alive: true,
+            pickable: false,
+            pulse: 0,
+        });
+    }
+
+    _updateRunes(dt) {
+        // Spawn timers (skip in multiplayer for now — host-only in future)
+        if (!this.netMode) {
+            this._runeTimerPlayer -= dt;
+            this._runeTimerEnemy -= dt;
+            if (this._runeTimerPlayer <= 0) {
+                this._spawnRune('player');
+                this._runeTimerPlayer = this._nextRuneDelay();
+            }
+            if (this._runeTimerEnemy <= 0) {
+                this._spawnRune('enemy');
+                this._runeTimerEnemy = this._nextRuneDelay();
+            }
+        }
+
+        for (let i = this.runes.length - 1; i >= 0; i--) {
+            const r = this.runes[i];
+            r.pulse += dt;
+            // Telegraph phase
+            if (r.telegraph > 0) {
+                r.telegraph -= dt;
+                if (r.telegraph <= 0) r.pickable = true;
+                continue;
+            }
+            // Lifetime countdown
+            r.lifetime -= dt;
+            if (r.lifetime <= 0) {
+                r.alive = false;
+                this.runes.splice(i, 1);
+                continue;
+            }
+            // Pickup check — fighter on the matching side walks over it
+            const fighter = r.side === 'player' ? this.player : this.enemy;
+            if (fighter.lane === r.lane && Math.abs(fighter.cx - r.x) < CONFIG.RUNE_PICKUP_DIST) {
+                this._pickupRune(r, fighter);
+                this.runes.splice(i, 1);
+            }
+        }
+    }
+
+    _pickupRune(rune, fighter) {
+        const t = rune.type;
+        // Apply buff
+        if (t.staminaRefill) {
+            fighter.stamina = Math.min(fighter.maxStamina, fighter.stamina + t.staminaRefill);
+        }
+        if (t.speedMult) {
+            fighter._runeSpeed = t.speedMult;
+            fighter._runeSpeedTimer = t.duration;
+        }
+        if (t.regenRate) {
+            fighter._runeRegen = t.regenRate;
+            fighter._runeRegenTimer = t.duration;
+            fighter._runeRegenTick = 0;
+        }
+        // VFX
+        this.effects.burst(rune.x, rune.y, t.color, 12, 5, 400, 5, { round: true, glow: true, fadeSize: true });
+        this.effects.statusText(rune.x, rune.y - 20, t.label, t.color);
+    }
+
+    _updateRuneBuffs(dt) {
+        [this.player, this.enemy].forEach(f => {
+            // Speed buff
+            if (f._runeSpeedTimer > 0) {
+                f._runeSpeedTimer -= dt;
+                if (f._runeSpeedTimer <= 0) {
+                    delete f._runeSpeed;
+                    delete f._runeSpeedTimer;
+                }
+            }
+            // Regen buff
+            if (f._runeRegenTimer > 0) {
+                f._runeRegenTimer -= dt;
+                f._runeRegenTick = (f._runeRegenTick || 0) - dt;
+                if (f._runeRegenTick <= 0) {
+                    f._runeRegenTick = 500;
+                    f.hp = Math.min(f.maxHp, f.hp + f._runeRegen);
+                }
+                if (f._runeRegenTimer <= 0) {
+                    delete f._runeRegen;
+                    delete f._runeRegenTimer;
+                    delete f._runeRegenTick;
+                }
+            }
+        });
+    }
+
+    _drawRunes(ctx) {
+        const now = Date.now();
+        this.runes.forEach(r => {
+            const t = r.type;
+            const sz = 14;
+            // Telegraph phase: flickering shimmer
+            if (r.telegraph > 0) {
+                const progress = 1 - r.telegraph / CONFIG.RUNE_TELEGRAPH;
+                const flicker = Math.sin(now / 60) * 0.3 + 0.3;
+                ctx.save();
+                ctx.globalAlpha = progress * flicker;
+                ctx.fillStyle = t.color;
+                ctx.shadowColor = t.color;
+                ctx.shadowBlur = 12;
+                ctx.beginPath();
+                ctx.arc(r.x, r.y, sz * progress, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                ctx.restore();
+                return;
+            }
+            // Fade out in the last 1.5s
+            const fadeAlpha = r.lifetime < 1500 ? r.lifetime / 1500 : 1;
+            const pulse = 0.85 + Math.sin(r.pulse / 200) * 0.15;
+            ctx.save();
+            ctx.globalAlpha = fadeAlpha;
+            // Outer glow
+            ctx.fillStyle = t.color;
+            ctx.shadowColor = t.color;
+            ctx.shadowBlur = 16 * pulse;
+            ctx.beginPath();
+            ctx.arc(r.x, r.y, sz * pulse, 0, Math.PI * 2);
+            ctx.fill();
+            // Inner bright core
+            ctx.globalAlpha = fadeAlpha * 0.9;
+            ctx.fillStyle = '#ffffff';
+            ctx.shadowBlur = 0;
+            ctx.beginPath();
+            ctx.arc(r.x, r.y, sz * 0.5, 0, Math.PI * 2);
+            ctx.fill();
+            // Icon
+            ctx.globalAlpha = fadeAlpha;
+            ctx.fillStyle = t.color;
+            ctx.font = '700 16px serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(t.icon, r.x, r.y);
+            ctx.shadowBlur = 0;
+            ctx.restore();
+        });
     }
 
     _calcDamage(baseDmg, attacker, target, spell) {
@@ -1706,22 +1904,22 @@ class Combat {
         if (this.netMode) {
             // In multiplayer, local input controls localFighter
             const lf = this.localFighter;
-            if (!lf.isStunned()) {
+            if (!lf.isStunned() && !this.input.isBusy) {
                 if (this.isHost) {
                     // Host is on the left side
                     if (this.input.isDown('ArrowLeft')) {
-                        lf.x = Math.max(CONFIG.FIELD_LEFT + 5, lf.x - lf.speed * CONFIG.BACKWARD_SPEED * (dt / 16));
+                        lf.x = Math.max(CONFIG.FIELD_LEFT + 5, lf.x - lf.moveSpeed * CONFIG.BACKWARD_SPEED * (dt / 16));
                     }
                     if (this.input.isDown('ArrowRight')) {
-                        lf.x = Math.min(CONFIG.MIDPOINT - CONFIG.SPRITE - 5, lf.x + lf.speed * (dt / 16));
+                        lf.x = Math.min(CONFIG.MIDPOINT - CONFIG.SPRITE - 5, lf.x + lf.moveSpeed * (dt / 16));
                     }
                 } else {
                     // Guest is on the right side: ArrowLeft = move left (forward), ArrowRight = move right (backward)
                     if (this.input.isDown('ArrowLeft')) {
-                        lf.x = Math.max(CONFIG.MIDPOINT + CONFIG.SPRITE + 5, lf.x - lf.speed * (dt / 16));
+                        lf.x = Math.max(CONFIG.MIDPOINT + CONFIG.SPRITE + 5, lf.x - lf.moveSpeed * (dt / 16));
                     }
                     if (this.input.isDown('ArrowRight')) {
-                        lf.x = Math.min(CONFIG.FIELD_RIGHT - 5, lf.x + lf.speed * CONFIG.BACKWARD_SPEED * (dt / 16));
+                        lf.x = Math.min(CONFIG.FIELD_RIGHT - 5, lf.x + lf.moveSpeed * CONFIG.BACKWARD_SPEED * (dt / 16));
                     }
                 }
                 if (this.input.wasPressed('ArrowUp')) lf.switchLane(-1);
@@ -1736,14 +1934,15 @@ class Combat {
             // Single player: normal movement
             const p = this.player;
             const isCasting = this.windups.some(w => w.caster === p && !w.executed);
-            const holdingBack = this.input.isDown('ArrowLeft') && !p.isStunned();
+            const spellBusy = this.input.isBusy; // mid-combo or post-cast cooldown
+            const holdingBack = this.input.isDown('ArrowLeft') && !p.isStunned() && !spellBusy;
             const threatNearby = holdingBack && this._hasImmediateThreat(p);
 
             // Fighting-game back = block: if threat nearby, block in place; otherwise just walk back
             p.blocking = holdingBack && threatNearby;
             p.blockLocked = p.blocking;
 
-            if (!p.isStunned() && !isCasting) {
+            if (!p.isStunned() && !isCasting && !spellBusy) {
                 // Dash: double-tap forward or backward
                 if (this.input.wasPressed('ArrowRight') && !p.isDashing) {
                     const now = Date.now();
@@ -1771,12 +1970,12 @@ class Combat {
                 if (!p.isDashing) {
                     if (holdingBack && !threatNearby) {
                         // No threat: walk backward (slower)
-                        p.x = Math.max(CONFIG.FIELD_LEFT + 5, p.x - p.speed * CONFIG.BACKWARD_SPEED * (dt / 16));
+                        p.x = Math.max(CONFIG.FIELD_LEFT + 5, p.x - p.moveSpeed * CONFIG.BACKWARD_SPEED * (dt / 16));
                     }
                     // Blocked players don't move — they plant and guard
                     if (this.input.isDown('ArrowRight')) {
                         // Forward: full speed
-                        p.x = Math.min(CONFIG.MIDPOINT - CONFIG.SPRITE - 5, p.x + p.speed * (dt / 16));
+                        p.x = Math.min(CONFIG.MIDPOINT - CONFIG.SPRITE - 5, p.x + p.moveSpeed * (dt / 16));
                     }
                 }
                 // Parry: tap forward opens a brief parry window (Third Strike style)
@@ -1804,18 +2003,18 @@ class Combat {
                 if (this.isHost) {
                     // Remote is guest (right side): ArrowLeft = forward, ArrowRight = backward
                     if (this.remoteInput.isDown('ArrowLeft')) {
-                        rf.x = Math.max(CONFIG.MIDPOINT + CONFIG.SPRITE + 5, rf.x - rf.speed * (dt / 16));
+                        rf.x = Math.max(CONFIG.MIDPOINT + CONFIG.SPRITE + 5, rf.x - rf.moveSpeed * (dt / 16));
                     }
                     if (this.remoteInput.isDown('ArrowRight')) {
-                        rf.x = Math.min(CONFIG.FIELD_RIGHT - 5, rf.x + rf.speed * CONFIG.BACKWARD_SPEED * (dt / 16));
+                        rf.x = Math.min(CONFIG.FIELD_RIGHT - 5, rf.x + rf.moveSpeed * CONFIG.BACKWARD_SPEED * (dt / 16));
                     }
                 } else {
                     // Remote is host (left side): ArrowLeft = backward, ArrowRight = forward
                     if (this.remoteInput.isDown('ArrowLeft')) {
-                        rf.x = Math.max(CONFIG.FIELD_LEFT + 5, rf.x - rf.speed * CONFIG.BACKWARD_SPEED * (dt / 16));
+                        rf.x = Math.max(CONFIG.FIELD_LEFT + 5, rf.x - rf.moveSpeed * CONFIG.BACKWARD_SPEED * (dt / 16));
                     }
                     if (this.remoteInput.isDown('ArrowRight')) {
-                        rf.x = Math.min(CONFIG.MIDPOINT - CONFIG.SPRITE - 5, rf.x + rf.speed * (dt / 16));
+                        rf.x = Math.min(CONFIG.MIDPOINT - CONFIG.SPRITE - 5, rf.x + rf.moveSpeed * (dt / 16));
                     }
                 }
                 if (this.remoteInput.wasPressed('ArrowUp')) rf.switchLane(-1);
@@ -1830,6 +2029,10 @@ class Combat {
 
         // Update AI (skip in multiplayer)
         if (this.ai) this.ai.update(dt, this);
+
+        // Runes: spawn, pickup, buff ticks
+        this._updateRunes(dt);
+        this._updateRuneBuffs(dt);
 
         // Multiplayer: periodic host state correction (every 3 seconds)
         if (this.netMode && this.net && this.net.isHost) {
@@ -1901,8 +2104,13 @@ class Combat {
         this.summons.forEach(s => {
             s.update(dt);
             if (!s.alive) return;
+            // Movement behavior AI
+            s.updateBehavior(dt, this);
             // Summon attacks
-            if (s.canAttack()) this._summonAttack(s);
+            if (s.canAttack()) {
+                s.onAttack();
+                this._summonAttack(s);
+            }
             // Summon healing
             if (s.canHeal()) this._summonHeal(s);
         });
@@ -2525,6 +2733,9 @@ class Combat {
 
         // Lane effects (behind entities)
         this.laneEffects.forEach(le => le.draw(ctx));
+
+        // Runes (field pickups)
+        this._drawRunes(ctx);
 
         // Summons
         this.summons.forEach(s => {

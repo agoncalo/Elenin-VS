@@ -42,6 +42,18 @@ const CONFIG = {
     STAMINA_REGEN_DELAY: 500,    // ms pause after spending before regen resumes
     AI_STAMINA_REGEN: 22,        // AI regens faster
 
+    // Runes (field pickups)
+    RUNE_SPAWN_MIN: 8000,        // ms minimum between spawns (per side)
+    RUNE_SPAWN_MAX: 15000,       // ms maximum between spawns (per side)
+    RUNE_TELEGRAPH: 1000,        // ms shimmer before rune becomes pickable
+    RUNE_LIFETIME: 6000,         // ms before rune fades away
+    RUNE_PICKUP_DIST: 36,        // px distance to pick up
+    RUNE_TYPES: [
+        { id: 'stamina', label: '+STA',  color: '#44ddff', icon: '\u2726', staminaRefill: 40 },
+        { id: 'speed',   label: 'SPD\u2191',  color: '#ffaa22', icon: '\u2607', speedMult: 1.5, duration: 4000 },
+        { id: 'regen',   label: 'REGEN', color: '#44ff88', icon: '\u2665', regenRate: 3, duration: 5000 },
+    ],
+
     // Movement
     BACKWARD_SPEED: 0.75,        // backward movement multiplier (vs forward = 1.0)
 

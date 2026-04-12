@@ -123,54 +123,63 @@ const SPELL_DATA = {
         icon: 'lamp',
         desc: 'Heals nearby allies in the same lane. No attack.',
         stats: { hp: 4, dmg: 0, atkRate: 0, healAmt: 2, healRate: 2000, cd: 4500, loyaltyVal: 3, stamina: 20 },
+        behavior: 'healer',  // drifts toward lowest HP ally, switches lanes
     },
     'CZX': {
         name: 'Blocky', type: 'summon', category: 'tank', affinity: 'none',
         icon: 'blocky',
         desc: 'A living barricade. Lots of HP, slow attack.',
         stats: { hp: 12, dmg: 2, atkRate: 2800, cd: 5000, loyaltyVal: 5, stamina: 26 },
+        behavior: 'guardian', // moves to front, switches to threatened lanes
     },
     'CZC': {
         name: 'Shield Javelineer', type: 'summon', category: 'tank', affinity: 'none',
         icon: 'javelineer',
         desc: 'Deflects projectiles sometimes.',
         stats: { hp: 7, dmg: 2, atkRate: 2200, cd: 4000, deflectChance: 0.3, loyaltyVal: 4, stamina: 22 },
+        behavior: 'sentinel', // holds mid-position, sidesteps toward incoming projectiles
     },
     'CXZ': {
         name: 'Ice Dragon Head', type: 'summon', category: 'magic', affinity: 'ice',
         icon: 'dragon',
         desc: 'Breathes frost across the enemy lane.',
         stats: { hp: 6, dmg: 1, atkRate: 3000, cd: 5000, breathDmg: 1, breathDur: 3000, freezeDur: 700, loyaltyVal: 5, stamina: 30 },
+        behavior: 'artillery', // stays back near backline, attacks from distance
     },
     'CXX': {
         name: 'Hydra Head', type: 'summon', category: 'tank', affinity: 'none',
         icon: 'hydra',
         desc: '3 heads with shared HP pool.',
         stats: { hp: 4, dmg: 2, atkRate: 2500, cd: 5000, heads: 3, loyaltyVal: 4, stamina: 24 },
+        behavior: 'brute',    // lurches forward to attack, retreats after
     },
     'CXC': {
         name: 'Samurai', type: 'summon', category: 'attack', affinity: 'none',
         icon: 'samurai',
         desc: 'Strong attacker. Throws shurikens.',
         stats: { hp: 6, dmg: 4, atkRate: 2700, cd: 5000, loyaltyVal: 5, stamina: 26 },
+        behavior: 'aggressor', // pushes toward midline aggressively
     },
     'CCZ': {
         name: 'Crystal Bird', type: 'summon', category: 'magic', affinity: 'ice',
         icon: 'bird_ice',
         desc: 'Fires icy shots that freeze enemies.',
         stats: { hp: 3, dmg: 2, atkRate: 2400, cd: 3200, freezeDur: 800, loyaltyVal: 3, stamina: 18 },
+        behavior: 'skirmisher', // zig-zags horizontally in lane, evasive
     },
     'CCX': {
         name: 'Fire Bird', type: 'summon', category: 'magic', affinity: 'fire',
         icon: 'bird_fire',
         desc: 'Fires burning shots.',
         stats: { hp: 3, dmg: 3, atkRate: 2400, cd: 3200, burnDmg: 1, burnDur: 1500, loyaltyVal: 3, stamina: 18 },
+        behavior: 'skirmisher', // zig-zags horizontally in lane, evasive
     },
     'CCC': {
         name: 'Electric Bird', type: 'summon', category: 'magic', affinity: 'shock',
         icon: 'bird_shock',
         desc: 'Fires shocking shots that stun enemies.',
         stats: { hp: 3, dmg: 2, atkRate: 2400, cd: 3200, stunDur: 600, loyaltyVal: 3, stamina: 18 },
+        behavior: 'skirmisher', // zig-zags horizontally in lane, evasive
     },
 };
 

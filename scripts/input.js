@@ -13,10 +13,10 @@ const DIRECTION_SPELL_MAP = {
     back: {
         Z: { Z: 'ZCZ', X: 'ZCX', C: 'ZCC' },     // defensive
         X: { Z: 'ZXZ', X: 'ZXX', C: 'ZXC' },     // enchants
-        C: { Z: 'CXZ', X: 'CXX', C: 'CXC' },     // power summons
+        C: { Z: 'XZZ', X: 'XZX', C: 'XZC' },     // magic proj
     },
     neutral: {
-        Z: { Z: 'XZZ', X: 'XZX', C: 'XZC' },     // magic proj
+        Z: { Z: 'CXZ', X: 'CXX', C: 'CXC' },     // power summons
         X: { Z: 'CZZ', X: 'CZX', C: 'CZC' },     // support summons
         C: { Z: 'CCZ', X: 'CCX', C: 'CCC' },      // birds
     },
@@ -65,7 +65,8 @@ class InputManager {
             if (['KeyZ', 'KeyX', 'KeyC'].includes(e.code)) {
                 if (!this.locked) {
                     this._addKey(e.code);
-                } else if (this.postCastTimer > 0 && this.inputBuffer.length < 2) {
+                } else if (this.inputBuffer.length < 2) {
+                    // Buffer during lockout or post-cast cooldown
                     this.inputBuffer.push(e.code);
                 }
             }
@@ -144,7 +145,20 @@ class InputManager {
             this.lockTimer -= dt;
             if (this.lockTimer <= 0) {
                 this.locked = false;
-                this.inputBuffer = [];
+                // Drain buffered keys
+                if (this.inputBuffer.length > 0) {
+                    if (this.firstKey) {
+                        // Second key was buffered during combo lockout
+                        const buffered = this.inputBuffer.shift();
+                        this._addKey(buffered);
+                    } else {
+                        // First key was buffered during post-cast cooldown — fire it now
+                        const buffered = this.inputBuffer.shift();
+                        this._addKey(buffered);
+                        // If a second key was also buffered, drain it after the new lockout
+                        // (it stays in the buffer and will be drained on next lockTimer expiry)
+                    }
+                }
             }
         }
     }
@@ -155,6 +169,10 @@ class InputManager {
 
     isDown(code) { return !!this.keys[code]; }
     wasPressed(code) { return !!this.justPressed[code]; }
+
+    // True when mid-combo (first key pressed, awaiting second) or in post-cast cooldown
+    // Used by combat to freeze movement so direction input doesn't cause walking
+    get isBusy() { return !!this.firstKey || this.postCastTimer > 0; }
 
     reset() {
         this.keys = {};

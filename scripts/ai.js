@@ -353,6 +353,13 @@ class EnemyAI {
                 if (targetLane > f.lane) f.switchLane(1);
                 else f.switchLane(-1);
             }
+        } else if (this._runeInRange(combat, f) && Math.random() < 0.6) {
+            // Rune pickup: move toward a rune on our side
+            const rune = combat.runes.find(r => r.side === 'enemy' && r.pickable);
+            if (rune && rune.lane !== f.lane) {
+                if (rune.lane > f.lane) f.switchLane(1);
+                else f.switchLane(-1);
+            }
         } else if (Math.random() < 0.35 * this.aiSpeed) {
             // Aggressive: match player lane
             const playerLane = combat.player.lane;
@@ -361,6 +368,10 @@ class EnemyAI {
         } else if (Math.random() < 0.25) {
             f.switchLane(Math.random() < 0.5 ? -1 : 1);
         }
+    }
+
+    _runeInRange(combat, f) {
+        return combat.runes.some(r => r.side === 'enemy' && r.pickable && Math.abs(r.lane - f.lane) <= 2);
     }
 
     _laneHasThreats(combat, lane) {
@@ -827,7 +838,7 @@ class EnemyAI {
             if (playerBlocking) {
                 if (stats.stunDur || stats.freezeDur) score += 4;
                 if (type === 'lane') score += 3;
-                if (type === 'summon') score += 1.5;
+                if (type === 'summon') score += 3;
                 if (type === 'projectile' && !stats.stunDur && !stats.freezeDur) score -= 2;
                 if (type === 'instant' && !stats.stunDur && !stats.freezeDur) score -= 1.5;
             }
@@ -901,7 +912,7 @@ class EnemyAI {
             // === RESOURCE-AWARE SCORING ===
 
             if (loyaltyThreatened) {
-                if (type === 'summon') score += 3;
+                if (type === 'summon') score += 5;
                 if (type === 'defensive') score += 2;
             }
 
@@ -937,32 +948,33 @@ class EnemyAI {
             const ownSummonCount = ownSummons.length;
             const uncoveredLanes = this._uncoveredLanes(combat);
             if (type === 'summon') {
-                // Base urgency: always want summons out
-                if (ownSummonCount === 0) score += 6;
-                else if (ownSummonCount === 1) score += 4;
-                else if (ownSummonCount === 2) score += 2;
+                // Base urgency: summons are core to game plan
+                if (ownSummonCount === 0) score += 10;
+                else if (ownSummonCount === 1) score += 7;
+                else if (ownSummonCount === 2) score += 5;
+                else if (ownSummonCount === 3) score += 3;
 
                 // Lane coverage: huge bonus if we have uncovered lanes
-                if (uncoveredLanes.length >= 4) score += 5;
-                else if (uncoveredLanes.length >= 3) score += 4;
-                else if (uncoveredLanes.length >= 2) score += 3;
-                else if (uncoveredLanes.length >= 1) score += 1.5;
+                if (uncoveredLanes.length >= 4) score += 6;
+                else if (uncoveredLanes.length >= 3) score += 5;
+                else if (uncoveredLanes.length >= 2) score += 4;
+                else if (uncoveredLanes.length >= 1) score += 2;
 
                 // Bonus if current lane is uncovered (summon spawns in our lane)
-                if (uncoveredLanes.includes(f.lane)) score += 2;
+                if (uncoveredLanes.includes(f.lane)) score += 3;
 
                 // Composition bonuses
                 const hasAttacker = ownSummons.some(s => s.dmg > 0);
                 const hasHealer = ownSummons.some(s => s.healAmt > 0);
-                if (hasAttacker && stats.healAmt) score += 2;
-                if (hasHealer && stats.dmg > 0) score += 1.5;
+                if (hasAttacker && stats.healAmt) score += 3;
+                if (hasHealer && stats.dmg > 0) score += 2;
 
                 // Counter player summon advantage
                 const playerSummonCount = combat.summons.filter(s => s.alive && s.owner === 'player').length;
-                if (playerSummonCount > ownSummonCount) score += 3;
+                if (playerSummonCount > ownSummonCount) score += 4;
 
                 // Loyalty threatened = summons are critical backline defense
-                if (loyaltyThreatened) score += 3;
+                if (loyaltyThreatened) score += 4;
             }
 
             // Punish player standing in our lane hazard

@@ -249,6 +249,11 @@ class Fighter extends Entity {
 
     get isDashing() { return this.dashTimer > 0; }
 
+    get moveSpeed() {
+        let s = this.speed;
+        if (this._runeSpeed) s *= this._runeSpeed;
+        return s;
+    }
     switchLane(dir) {
         if (this.laneSwitching > 0) return;
         if (this.isStunned()) return;
@@ -654,9 +659,34 @@ class Summon extends Entity {
         this.isHydra = comboKey === 'CXX';
 
         this.hitFlash = 0;
+
+        // Lane switching animation
+        this.laneSwitching = 0;
+        this.targetLane = lane;
+
+        // Movement behavior
+        this.behavior = SPELL_DATA[comboKey]?.behavior || 'static';
+        this.moveSpeed = 1.2;        // px per frame (base)
+        this.homeX = x;              // spawn position to return to
+        this.moveTarget = null;      // {x} target to move toward
+        this.moveTimer = 0;          // cooldown between movement decisions
+        this.zigDir = 1;             // zig-zag direction for skirmishers
+        this.zigTimer = 0;           // time until zig-zag direction flip
+        this.lurchTimer = 0;         // brute lurch attack cooldown
+        this.retreating = false;     // brute retreat state
+        this.laneSwitchCooldown = 0; // cooldown for lane-changing behaviors
     }
 
     update(dt) {
+        // Lane switching animation
+        if (this.laneSwitching > 0) {
+            this.laneSwitching -= dt;
+            if (this.laneSwitching <= 0) {
+                this.lane = this.targetLane;
+                this.laneSwitching = 0;
+            }
+        }
+
         if (this.stunTimer > 0) this.stunTimer -= dt;
         if (this.freezeTimer > 0) this.freezeTimer -= dt;
         if (this.hitFlash > 0) this.hitFlash -= dt;
@@ -687,6 +717,204 @@ class Summon extends Entity {
             this.atkTimer -= dt;
             if (this.healRate > 0) this.healTimer -= dt;
         }
+
+        // Movement cooldowns
+        if (this.laneSwitchCooldown > 0) this.laneSwitchCooldown -= dt;
+        if (this.moveTimer > 0) this.moveTimer -= dt;
+    }
+
+    // Movement behavior AI — called by combat.js with context
+    updateBehavior(dt, combat) {
+        if (this.isStunned()) return;
+
+        const isPlayer = this.owner === 'player';
+        const minX = isPlayer ? CONFIG.FIELD_LEFT + 5 : CONFIG.MIDPOINT + 5;
+        const maxX = isPlayer ? CONFIG.MIDPOINT - CONFIG.SPRITE - 5 : CONFIG.FIELD_RIGHT - CONFIG.SPRITE - 5;
+        const midX = (minX + maxX) / 2;
+        const frontX = isPlayer ? maxX : minX;
+        const backX = isPlayer ? minX : maxX;
+        const speed = this.moveSpeed * (dt / 16);
+
+        switch (this.behavior) {
+            case 'skirmisher': {
+                // Zig-zag horizontally within lane
+                this.zigTimer -= dt;
+                if (this.zigTimer <= 0) {
+                    this.zigDir *= -1;
+                    this.zigTimer = 400 + Math.random() * 600;
+                }
+                this.x += this.zigDir * speed * 1.5;
+                this.x = Math.max(minX, Math.min(maxX, this.x));
+                break;
+            }
+            case 'aggressor': {
+                // Push toward the front (midline)
+                const targetX = frontX - (isPlayer ? 20 : -20);
+                if (Math.abs(this.x - targetX) > 4) {
+                    this.x += (targetX > this.x ? 1 : -1) * speed * 0.8;
+                }
+                this.x = Math.max(minX, Math.min(maxX, this.x));
+                break;
+            }
+            case 'artillery': {
+                // Stay near backline
+                const targetX = backX + (isPlayer ? 30 : -30);
+                if (Math.abs(this.x - targetX) > 4) {
+                    this.x += (targetX > this.x ? 1 : -1) * speed * 0.5;
+                }
+                this.x = Math.max(minX, Math.min(maxX, this.x));
+                break;
+            }
+            case 'brute': {
+                // Lurch forward when attacking, retreat after
+                if (this.retreating) {
+                    const targetX = this.homeX;
+                    if (Math.abs(this.x - targetX) > 4) {
+                        this.x += (targetX > this.x ? 1 : -1) * speed * 0.6;
+                    } else {
+                        this.retreating = false;
+                    }
+                } else if (this.lurchTimer > 0) {
+                    // Lunging forward
+                    this.lurchTimer -= dt;
+                    this.x += (isPlayer ? 1 : -1) * speed * 2.5;
+                    if (this.lurchTimer <= 0) this.retreating = true;
+                }
+                this.x = Math.max(minX, Math.min(maxX, this.x));
+                break;
+            }
+            case 'guardian': {
+                // Move to front of lane, switch to most threatened lane
+                const targetX = frontX - (isPlayer ? 40 : -40);
+                if (Math.abs(this.x - targetX) > 4) {
+                    this.x += (targetX > this.x ? 1 : -1) * speed * 0.7;
+                }
+                this.x = Math.max(minX, Math.min(maxX, this.x));
+                // Lane switching: move to lane with most incoming threats
+                if (this.laneSwitchCooldown <= 0 && combat) {
+                    const threatened = this._mostThreatenedLane(combat);
+                    if (threatened !== null && threatened !== this.lane) {
+                        this.switchLane(threatened > this.lane ? 1 : -1);
+                        this.laneSwitchCooldown = 1500;
+                    }
+                }
+                break;
+            }
+            case 'sentinel': {
+                // Hold mid-position, sidestep toward incoming projectiles
+                if (this.moveTimer <= 0 && combat) {
+                    const incoming = this._nearestIncomingProj(combat);
+                    if (incoming !== null) {
+                        this.moveTarget = { x: Math.max(minX, Math.min(maxX, midX + (isPlayer ? 40 : -40))) };
+                    } else {
+                        this.moveTarget = { x: midX };
+                    }
+                    this.moveTimer = 800;
+                }
+                if (this.moveTarget) {
+                    if (Math.abs(this.x - this.moveTarget.x) > 4) {
+                        this.x += (this.moveTarget.x > this.x ? 1 : -1) * speed * 0.6;
+                    }
+                }
+                this.x = Math.max(minX, Math.min(maxX, this.x));
+                // Switch to lane with incoming projectile
+                if (this.laneSwitchCooldown <= 0 && combat) {
+                    const projLane = this._laneWithIncomingProj(combat);
+                    if (projLane !== null && projLane !== this.lane) {
+                        this.switchLane(projLane > this.lane ? 1 : -1);
+                        this.laneSwitchCooldown = 2000;
+                    }
+                }
+                break;
+            }
+            case 'healer': {
+                // Drift toward lowest HP ally, switch lanes to reach them
+                if (this.laneSwitchCooldown <= 0 && combat) {
+                    const woundedLane = this._mostWoundedAllyLane(combat);
+                    if (woundedLane !== null && woundedLane !== this.lane) {
+                        this.switchLane(woundedLane > this.lane ? 1 : -1);
+                        this.laneSwitchCooldown = 2000;
+                    }
+                }
+                // Stay near back for safety
+                const safeX = backX + (isPlayer ? 50 : -50);
+                if (Math.abs(this.x - safeX) > 4) {
+                    this.x += (safeX > this.x ? 1 : -1) * speed * 0.4;
+                }
+                this.x = Math.max(minX, Math.min(maxX, this.x));
+                break;
+            }
+        }
+    }
+
+    // Trigger brute lurch on attack
+    onAttack() {
+        if (this.behavior === 'brute' && !this.retreating && this.lurchTimer <= 0) {
+            this.lurchTimer = 200;
+        }
+    }
+
+    switchLane(dir) {
+        if (this.laneSwitching > 0) return;
+        const newLane = this.lane + dir;
+        if (newLane < 0 || newLane >= CONFIG.LANE_COUNT) return;
+        this.targetLane = newLane;
+        this.laneSwitching = CONFIG.LANE_SWITCH_TIME;
+    }
+
+    // Helper: find lane with most incoming enemy projectiles
+    _mostThreatenedLane(combat) {
+        const isPlayer = this.owner === 'player';
+        const threats = [0, 0, 0, 0, 0];
+        combat.projectiles.forEach(p => {
+            if (p.alive && p.owner !== this.owner) {
+                threats[p.lane]++;
+            }
+        });
+        let best = -1, bestVal = 0;
+        for (let i = 0; i < CONFIG.LANE_COUNT; i++) {
+            if (threats[i] > bestVal) { bestVal = threats[i]; best = i; }
+        }
+        return bestVal > 0 ? best : null;
+    }
+
+    // Helper: find lane with a nearby incoming projectile (for sentinel intercept)
+    _laneWithIncomingProj(combat) {
+        const isPlayer = this.owner === 'player';
+        const threshold = isPlayer ? CONFIG.MIDPOINT - 100 : CONFIG.MIDPOINT + 100;
+        for (const p of combat.projectiles) {
+            if (!p.alive || p.owner === this.owner) continue;
+            if ((isPlayer && p.x > threshold) || (!isPlayer && p.x < threshold)) {
+                return p.lane;
+            }
+        }
+        return null;
+    }
+
+    // Helper: nearest incoming projectile in our lane
+    _nearestIncomingProj(combat) {
+        const isPlayer = this.owner === 'player';
+        for (const p of combat.projectiles) {
+            if (!p.alive || p.owner === this.owner || p.lane !== this.lane) continue;
+            return p;
+        }
+        return null;
+    }
+
+    // Helper: find lane with most wounded ally (for healer)
+    _mostWoundedAllyLane(combat) {
+        let lowestPct = 1, lane = null;
+        // Check the ninja
+        const ninja = this.owner === 'player' ? combat.player : combat.enemy;
+        const nPct = ninja.hp / ninja.maxHp;
+        if (nPct < lowestPct && nPct < 0.8) { lowestPct = nPct; lane = ninja.lane; }
+        // Check allied summons
+        combat.summons.forEach(s => {
+            if (s === this || s.owner !== this.owner || !s.alive) return;
+            const pct = s.hp / s.maxHp;
+            if (pct < lowestPct && pct < 0.8) { lowestPct = pct; lane = s.lane; }
+        });
+        return lane;
     }
 
     canAttack() {
@@ -731,9 +959,21 @@ class Summon extends Entity {
 
     draw(ctx, sideState) {
         const size = this.twoLane ? CONFIG.SPRITE * 1.5 : CONFIG.SPRITE;
+
+        // Interpolate Y during lane switching (smooth transition)
+        let baseY;
+        if (this.laneSwitching > 0) {
+            const progress = 1 - this.laneSwitching / CONFIG.LANE_SWITCH_TIME;
+            const fromY = CONFIG.FIELD_TOP + this.lane * CONFIG.LANE_HEIGHT + CONFIG.LANE_HEIGHT / 2 - CONFIG.SPRITE / 2;
+            const toY = CONFIG.FIELD_TOP + this.targetLane * CONFIG.LANE_HEIGHT + CONFIG.LANE_HEIGHT / 2 - CONFIG.SPRITE / 2;
+            baseY = fromY + (toY - fromY) * progress;
+        } else {
+            baseY = this.y;
+        }
+
         const drawY = this.twoLane
-            ? this.y - CONFIG.LANE_HEIGHT * 0.25
-            : this.y;
+            ? baseY - CONFIG.LANE_HEIGHT * 0.25
+            : baseY;
 
         if (this.freezeTimer > 0) {
             ctx.globalAlpha = 0.7;
@@ -860,13 +1100,16 @@ class Summon extends Entity {
     }
 
     getLanes() {
+        const lanes = new Set();
+        lanes.add(this.lane);
+        // Include target lane during transition so collision works mid-switch
+        if (this.laneSwitching > 0) lanes.add(this.targetLane);
         if (this.twoLane) {
-            const lanes = [this.lane];
-            if (this.lane > 0) lanes.push(this.lane - 1);
-            else if (this.lane < CONFIG.LANE_COUNT - 1) lanes.push(this.lane + 1);
-            return lanes;
+            const base = this.lane;
+            if (base > 0) lanes.add(base - 1);
+            else if (base < CONFIG.LANE_COUNT - 1) lanes.add(base + 1);
         }
-        return [this.lane];
+        return [...lanes];
     }
 }
 
