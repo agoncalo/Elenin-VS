@@ -675,6 +675,11 @@ class Summon extends Entity {
         this.lurchTimer = 0;         // brute lurch attack cooldown
         this.retreating = false;     // brute retreat state
         this.laneSwitchCooldown = 0; // cooldown for lane-changing behaviors
+
+        // War Drums buff
+        this.warDrums = 0;
+        this.warDrumsSpeed = 1;
+        this.warDrumsAtk = 1;
     }
 
     update(dt) {
@@ -721,6 +726,16 @@ class Summon extends Entity {
         // Movement cooldowns
         if (this.laneSwitchCooldown > 0) this.laneSwitchCooldown -= dt;
         if (this.moveTimer > 0) this.moveTimer -= dt;
+
+        // War Drums buff countdown
+        if (this.warDrums > 0) {
+            this.warDrums -= dt;
+            if (this.warDrums <= 0) {
+                this.warDrums = 0;
+                this.warDrumsSpeed = 1;
+                this.warDrumsAtk = 1;
+            }
+        }
     }
 
     // Movement behavior AI — called by combat.js with context
@@ -733,7 +748,7 @@ class Summon extends Entity {
         const midX = (minX + maxX) / 2;
         const frontX = isPlayer ? maxX : minX;
         const backX = isPlayer ? minX : maxX;
-        const speed = this.moveSpeed * (dt / 16);
+        const speed = this.moveSpeed * this.warDrumsSpeed * (dt / 16);
 
         switch (this.behavior) {
             case 'skirmisher': {
@@ -921,7 +936,7 @@ class Summon extends Entity {
         if (this.isStunned()) return false;
         if (this.dmg <= 0 && !this.breathDmg) return false;
         if (this.atkTimer <= 0) {
-            this.atkTimer = this.atkRate;
+            this.atkTimer = this.atkRate / this.warDrumsAtk;
             return true;
         }
         return false;

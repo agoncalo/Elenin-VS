@@ -656,9 +656,9 @@ class EnemyAI {
             // Lane effect under summon cluster
             const summonLanes = [...new Set(playerSummons.map(s => s.lane))];
             if (summonLanes.includes(f.lane)) {
-                if (has('XXX')) return has('ZZX') ? ['XXX', 'ZZX'] : has('XZX') ? ['XXX', 'XZX'] : null;
-                if (has('XXZ')) return has('ZZX') ? ['XXZ', 'ZZX'] : has('XZZ') ? ['XXZ', 'XZZ'] : null;
-                if (has('XXC')) return has('ZZX') ? ['XXC', 'ZZX'] : has('XZX') ? ['XXC', 'XZX'] : null;
+                if (has('XXX')) return has('ZZX') ? ['XXX', 'ZZX'] : null;
+                if (has('XXZ')) return has('ZZX') ? ['XXZ', 'ZZX'] : null;
+                if (has('XXC')) return has('ZZX') ? ['XXC', 'ZZX'] : null;
             }
         } else if (playerSummons.length === 1 && playerSummons[0].healAmt > 0) {
             // Kill enemy healer ASAP — they sustain everything
@@ -682,12 +682,10 @@ class EnemyAI {
         if (has('XCC')) {
             if (has('ZZX')) return ['XCC', 'ZZX'];
             if (has('XCX')) return ['XCC', 'XCX'];
-            if (has('XZX')) return ['XCC', 'XZX'];
         }
         // Thunder Path (XXC) → follow-up
         if (has('XXC')) {
             if (has('ZZX')) return ['XXC', 'ZZX'];
-            if (has('XZX')) return ['XXC', 'XZX'];
         }
         // Volt Enchant stun via Ice Shard/Fireball → follow-up
         if (has('ZXC') && (has('ZZX') || has('XXC'))) {
@@ -700,14 +698,11 @@ class EnemyAI {
         if (inHazard && has('ZCZ')) {
             // Shield up, then counter-attack
             if (has('ZZX')) return ['ZCZ', 'ZZX'];
-            if (has('XZX')) return ['ZCZ', 'XZX'];
         }
 
         // --- Trap combos: lane effect → zone control ---
         // Lane effect → projectile to punish dodge attempts
         if (inPlayerLane) {
-            if (has('XXX') && has('XZX')) return ['XXX', 'XZX']; // fire path + fireball
-            if (has('XXZ') && has('XZZ')) return ['XXZ', 'XZZ']; // frost path + ice shard
             if (has('XXX') && has('ZZX')) return ['XXX', 'ZZX']; // fire path + sword slash
             if (has('XXZ') && has('ZZX')) return ['XXZ', 'ZZX']; // frost path + sword slash
         }
@@ -717,9 +712,9 @@ class EnemyAI {
         if (has('XXX') && has('CCX')) return ['XXX', 'CCX']; // Inferno + Fire Bird
         if (has('XXZ') && has('CCZ')) return ['XXZ', 'CCZ']; // Frost path + Crystal Bird
 
-        // --- Enchant → projectile burst ---
-        if (has('ZXZ') && has('XZZ')) return ['ZXZ', 'XZZ']; // ice enchant + ice shard (double freeze)
-        if (has('ZXX') && has('XZX')) return ['ZXX', 'XZX']; // fire enchant + fireball (double burn)
+        // --- Enchant → attack burst ---
+        if (has('ZXZ') && has('ZZX')) return ['ZXZ', 'ZZX']; // ice enchant + sword slash
+        if (has('ZXX') && has('ZZX')) return ['ZXX', 'ZZX']; // fire enchant + sword slash
 
         // --- Defensive setup → vlane ---
         if (player.hp < player.maxHp * 0.5) {
@@ -975,6 +970,37 @@ class EnemyAI {
 
                 // Loyalty threatened = summons are critical backline defense
                 if (loyaltyThreatened) score += 4;
+            }
+
+            // === SUMMON UTILITY SPELLS ===
+            if (type === 'utility') {
+                if (ownSummonCount === 0) {
+                    score -= 5; // useless without summons
+                } else {
+                    switch (key) {
+                        case 'XZZ': { // Mend — heal summons
+                            const woundedCount = ownSummons.filter(s => s.hp < s.maxHp * 0.7).length;
+                            if (woundedCount === 0) score -= 3;
+                            else score += 2 + woundedCount * 2;
+                            break;
+                        }
+                        case 'XZX': { // War Drums — speed + atk buff
+                            const unbuffed = ownSummons.filter(s => s.warDrums <= 0).length;
+                            if (unbuffed === 0) score -= 3;
+                            else score += 1 + ownSummonCount * 1.5;
+                            if (onAdvantage) score += 2;
+                            break;
+                        }
+                        case 'XZC': { // Absorption — consume for HP/stamina
+                            const hpPct = f.hp / f.maxHp;
+                            const staPct = f.stamina / f.maxStamina;
+                            if (hpPct < 0.3 || staPct < 0.2) score += 4 + ownSummonCount * 2;
+                            else if (hpPct < 0.5 || staPct < 0.35) score += 1 + ownSummonCount;
+                            else score -= 4; // don't waste summons when healthy
+                            break;
+                        }
+                    }
+                }
             }
 
             // Punish player standing in our lane hazard

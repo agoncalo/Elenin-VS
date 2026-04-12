@@ -416,6 +416,85 @@ const UI = {
                 ctx.shadowBlur = 0;
                 break;
             }
+            case 'heal': {
+                // Green cross (medical heal)
+                ctx.fillStyle = '#44ff88';
+                ctx.shadowColor = '#44ff88';
+                ctx.shadowBlur = 5;
+                ctx.fillRect(x - 2, y - 7, 4, 14);
+                ctx.fillRect(x - 7, y - 2, 14, 4);
+                // Soft glow ring
+                ctx.globalAlpha = 0.3;
+                ctx.strokeStyle = '#88ffaa';
+                ctx.lineWidth = 1.2;
+                ctx.beginPath();
+                ctx.arc(x, y, 8, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+                break;
+            }
+            case 'drums': {
+                // Two drum circles with sticks
+                ctx.fillStyle = '#ffcc44';
+                ctx.shadowColor = '#ffcc44';
+                ctx.shadowBlur = 4;
+                // Left drum body
+                ctx.beginPath();
+                ctx.ellipse(x - 3, y + 1, 4, 5, 0, 0, Math.PI * 2);
+                ctx.fill();
+                // Right drum body
+                ctx.beginPath();
+                ctx.ellipse(x + 3, y + 1, 4, 5, 0, 0, Math.PI * 2);
+                ctx.fill();
+                // Drum heads (lighter)
+                ctx.fillStyle = '#ffe088';
+                ctx.beginPath();
+                ctx.ellipse(x - 3, y - 2, 3.5, 1.5, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(x + 3, y - 2, 3.5, 1.5, 0, 0, Math.PI * 2);
+                ctx.fill();
+                // Drumsticks
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 1.2;
+                ctx.beginPath(); ctx.moveTo(x - 7, y - 7); ctx.lineTo(x - 2, y - 1); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(x + 7, y - 7); ctx.lineTo(x + 2, y - 1); ctx.stroke();
+                // Stick tips
+                ctx.fillStyle = '#fff';
+                ctx.beginPath(); ctx.arc(x - 7, y - 7, 1.2, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(x + 7, y - 7, 1.2, 0, Math.PI * 2); ctx.fill();
+                ctx.shadowBlur = 0;
+                break;
+            }
+            case 'absorb': {
+                // Swirling vortex pulling inward
+                ctx.strokeStyle = '#cc88ff';
+                ctx.shadowColor = '#cc88ff';
+                ctx.shadowBlur = 5;
+                ctx.lineWidth = 1.5;
+                const t = Date.now() / 600;
+                // Spiral arms
+                for (let i = 0; i < 3; i++) {
+                    const baseAngle = t + i * (Math.PI * 2 / 3);
+                    ctx.beginPath();
+                    for (let j = 0; j <= 8; j++) {
+                        const frac = j / 8;
+                        const r = 8 - frac * 6;
+                        const a = baseAngle + frac * 2.5;
+                        const px = x + Math.cos(a) * r;
+                        const py = y + Math.sin(a) * r;
+                        j === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+                    }
+                    ctx.stroke();
+                }
+                // Center core
+                ctx.fillStyle = '#ddaaff';
+                ctx.beginPath();
+                ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                break;
+            }
             default:
                 // Summons — use bigger size so details are legible
                 Sprites.summon(ctx, x - 10, y - 10, 20, col, spell.icon, 1, 'right');

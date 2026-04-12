@@ -480,16 +480,6 @@ class Combat {
             castX: caster.cx,
             castY: caster.cy,
         };
-        // Vlane aiming: player controls the aim cursor during windup
-        if (type === 'vlane' && caster.owner === 'player') {
-            const isPlayer = true;
-            // Mirror: player frontline → enemy frontline, player backline → enemy backline
-            const playerDepth = (caster.cx - CONFIG.FIELD_LEFT) / (CONFIG.MIDPOINT - CONFIG.FIELD_LEFT); // 0=back, 1=front
-            const enemyMin = CONFIG.MIDPOINT + 40;
-            const enemyMax = CONFIG.FIELD_RIGHT - 10;
-            // Mirrored: player front (1) → enemy front (enemyMin), player back (0) → enemy back (enemyMax)
-            w.vlaneAimX = enemyMin + (1 - playerDepth) * (enemyMax - enemyMin);
-        }
         this.windups.push(w);
     }
 
@@ -504,17 +494,6 @@ class Combat {
             if (w.caster.hp <= 0) { w.executed = true; return; }
             // Close eyes during IAI windup
             if (w.type === 'instant') w.caster._eyesClosed = true;
-            // Vlane aiming: player adjusts aim during windup
-            if (w.vlaneAimX != null) {
-                const aimSpeed = 6 * (dt / 16); // higher sensitivity
-                if (this.input.isDown('ArrowRight')) {
-                    w.vlaneAimX += aimSpeed; // forward = push deeper into enemy side
-                }
-                if (this.input.isDown('ArrowLeft')) {
-                    w.vlaneAimX -= aimSpeed; // back = pull toward enemy frontline
-                }
-                w.vlaneAimX = Math.max(CONFIG.MIDPOINT + 40, Math.min(w.vlaneAimX, CONFIG.FIELD_RIGHT - 40));
-            }
             w.timer -= dt;
             if (w.timer <= 0) {
                 w.executed = true;
@@ -525,7 +504,7 @@ class Combat {
     }
 
     _executeWindupEffect(w) {
-        const sfxMap = { projectile: 'projectile', instant: 'slash', enchant: 'enchant', defensive: 'shield', lane: 'lane', vlane: 'aoe', summon: 'summon' };
+        const sfxMap = { projectile: 'projectile', instant: 'slash', enchant: 'enchant', defensive: 'shield', lane: 'lane', vlane: 'aoe', summon: 'summon', utility: 'enchant' };
         AudioEngine.playSfx(sfxMap[w.type] || 'projectile');
         // For lane/vlane/summon, use the snapshotted lane so switching lanes during windup doesn't move the effect
         const needsSnap = w.type === 'lane' || w.type === 'vlane' || w.type === 'summon';
@@ -537,8 +516,9 @@ class Combat {
             case 'enchant':   this._applyEnchant(w.comboKey, w.caster, w.stats); break;
             case 'defensive': this._applyDefensive(w.comboKey, w.caster, w.stats); break;
             case 'lane':      this._spawnLaneEffect(w.comboKey, w.caster, w.stats); break;
-            case 'vlane':     this._spawnVLaneEffect(w.comboKey, w.caster, w.stats, w.vlaneAimX || w.castX); break;
+            case 'vlane':     this._spawnVLaneEffect(w.comboKey, w.caster, w.stats, w.castX); break;
             case 'summon':    this._spawnSummon(w.comboKey, w.caster, w.stats); break;
+            case 'utility':   this._applySummonUtility(w.comboKey, w.caster, w.stats); break;
         }
         if (needsSnap) w.caster.lane = origLane;
 
@@ -572,6 +552,7 @@ class Combat {
                 case 'lane':      this._drawLaneWindup(ctx, w, progress); break;
                 case 'vlane':     this._drawVLaneWindup(ctx, w, progress); break;
                 case 'summon':    this._drawSummonWindup(ctx, w, progress); break;
+                case 'utility':   this._drawKanjiWindup(ctx, w, progress); break;
             }
         });
     }
@@ -1037,30 +1018,34 @@ class Combat {
         const isPlayer = c.owner === 'player';
         const t = Date.now();
 
-        // Project vlane into enemy's side — aim position
+        // Auto-aim telegraph: find best X to hit most enemies
+        const stripW_tel = 80;
+        const enemySide = isPlayer ? 'enemy' : 'player';
+        const targets = [];
+        const opponent = isPlayer ? this.enemy : this.player;
+        if (opponent) targets.push(opponent.cx);
+        this.summons.forEach(s => {
+            if (s.alive && s.owner === enemySide) targets.push(s.cx || s.x);
+        });
         let clampedX;
-        if (w.vlaneAimX != null) {
-            // Player-aimed: use the live aim cursor
-            clampedX = w.vlaneAimX;
+        if (targets.length <= 1) {
+            clampedX = targets.length === 1 ? targets[0] : (isPlayer ? (CONFIG.MIDPOINT + CONFIG.FIELD_RIGHT) / 2 : (CONFIG.FIELD_LEFT + CONFIG.MIDPOINT) / 2);
         } else {
-            // AI: calculate from caster position
-            const cx0 = w.castX;
-            let targetX;
-            if (isPlayer) {
-                const forwardFrac = (cx0 - CONFIG.FIELD_LEFT) / (CONFIG.MIDPOINT - CONFIG.FIELD_LEFT);
-                const midTarget = CONFIG.MIDPOINT + 40;
-                const enemyTarget = this.enemy ? this.enemy.cx : midTarget;
-                targetX = midTarget + forwardFrac * (enemyTarget - midTarget);
-            } else {
-                const forwardFrac = (CONFIG.FIELD_RIGHT - cx0) / (CONFIG.FIELD_RIGHT - CONFIG.MIDPOINT);
-                const midTarget = CONFIG.MIDPOINT - 40;
-                const playerTarget = this.player ? this.player.cx : midTarget;
-                targetX = midTarget - forwardFrac * (midTarget - playerTarget);
+            let bestX = targets[0], bestCount = 0;
+            for (const tx of targets) {
+                let count = 0;
+                for (const ox of targets) {
+                    if (Math.abs(ox - tx) <= stripW_tel / 2) count++;
+                }
+                if (count > bestCount || (count === bestCount && opponent && Math.abs(tx - opponent.cx) < Math.abs(bestX - opponent.cx))) {
+                    bestCount = count; bestX = tx;
+                }
             }
-            clampedX = isPlayer
-                ? Math.max(CONFIG.MIDPOINT + 40, Math.min(targetX, CONFIG.FIELD_RIGHT - 40))
-                : Math.max(CONFIG.FIELD_LEFT + 40, Math.min(targetX, CONFIG.MIDPOINT - 40));
+            clampedX = bestX;
         }
+        clampedX = isPlayer
+            ? Math.max(CONFIG.MIDPOINT + 40, Math.min(clampedX, CONFIG.FIELD_RIGHT - 40))
+            : Math.max(CONFIG.FIELD_LEFT + 40, Math.min(clampedX, CONFIG.MIDPOINT - 40));
         const stripW = 80;
         const x = clampedX - stripW / 2;
         const y = CONFIG.FIELD_TOP;
@@ -1228,6 +1213,70 @@ class Combat {
             affinity.toUpperCase() + ' ENCHANT', AFFINITY_COLORS[affinity]);
     }
 
+    _applySummonUtility(comboKey, caster, stats) {
+        const owner = caster.owner;
+        const allied = this.summons.filter(s => s.owner === owner && s.alive);
+
+        switch (comboKey) {
+            case 'XZZ': { // Mend — heal all summons
+                let healed = 0;
+                allied.forEach(s => {
+                    if (s.hp < s.maxHp) {
+                        s.hp = Math.min(s.maxHp, s.hp + stats.healAmt);
+                        this.effects.healNumber(s.cx, s.y, stats.healAmt);
+                        healed++;
+                    }
+                });
+                if (healed > 0) {
+                    AudioEngine.playSfx('heal');
+                    this.effects.statusText(caster.cx, caster.y - 15, 'MEND', '#88ff88');
+                } else {
+                    this.effects.statusText(caster.cx, caster.y - 15, 'NO TARGETS', '#888888');
+                }
+                break;
+            }
+            case 'XZX': { // War Drums — speed + attack speed buff
+                allied.forEach(s => {
+                    s.warDrums = stats.duration;
+                    s.warDrumsSpeed = stats.speedMult;
+                    s.warDrumsAtk = stats.atkMult;
+                });
+                if (allied.length > 0) {
+                    this.effects.statusText(caster.cx, caster.y - 15, 'WAR DRUMS', '#ffcc44');
+                    allied.forEach(s => {
+                        this.effects.burst(s.cx, s.cy, '#ffcc44', 6, 3, 300, 3, { round: true, glow: true });
+                    });
+                } else {
+                    this.effects.statusText(caster.cx, caster.y - 15, 'NO TARGETS', '#888888');
+                }
+                break;
+            }
+            case 'XZC': { // Absorption — consume summons for HP + stamina
+                if (allied.length === 0) {
+                    this.effects.statusText(caster.cx, caster.y - 15, 'NO SUMMONS', '#888888');
+                    break;
+                }
+                let totalHp = 0, totalSta = 0;
+                allied.forEach(s => {
+                    totalHp += stats.hpPerSummon;
+                    totalSta += stats.staminaPerSummon;
+                    this.effects.poofCloud(s.cx, s.cy, 20);
+                    s.hp = 0;
+                    s.alive = false;
+                    delete caster.spellOnScreen[s.comboKey];
+                });
+                caster.hp = Math.min(caster.maxHp, caster.hp + totalHp);
+                caster.stamina = Math.min(caster.maxStamina, caster.stamina + totalSta);
+                this.effects.healNumber(caster.cx, caster.y, totalHp);
+                this.effects.statusText(caster.cx, caster.y - 15,
+                    'ABSORB x' + allied.length, '#cc88ff');
+                this.effects.burst(caster.cx, caster.cy, '#cc88ff', 10, 4, 400, 5,
+                    { round: true, glow: true, fadeSize: true });
+                break;
+            }
+        }
+    }
+
     _applyDefensive(comboKey, caster, stats) {
         switch (comboKey) {
             case 'ZCZ': // Shield
@@ -1281,45 +1330,31 @@ class Combat {
         const stripW = 80;
         let targetX;
 
-        if (isPlayer) {
-            // Player: snappedCX is the player-aimed position (vlaneAimX)
-            targetX = snappedCX || (CONFIG.MIDPOINT + CONFIG.FIELD_RIGHT) / 2;
+        // Auto-aim: find X that hits the most enemy entities
+        const enemySide = isPlayer ? 'enemy' : 'player';
+        const targets = [];
+        const opponent = isPlayer ? this.enemy : this.player;
+        if (opponent) targets.push(opponent.cx);
+        this.summons.forEach(s => {
+            if (s.alive && s.owner === enemySide) targets.push(s.cx || s.x);
+        });
+
+        if (targets.length <= 1) {
+            targetX = targets.length === 1 ? targets[0] : (isPlayer ? (CONFIG.MIDPOINT + CONFIG.FIELD_RIGHT) / 2 : (CONFIG.FIELD_LEFT + CONFIG.MIDPOINT) / 2);
         } else {
-            // AI casting: find the X on the player's side that hits the most entities
-            const player = this.player;
-            const cx0 = snappedCX || caster.cx;
-            const forwardFrac = (CONFIG.FIELD_RIGHT - cx0) / (CONFIG.FIELD_RIGHT - CONFIG.MIDPOINT);
-
-            // Collect all target X positions on the player's side
-            const targets = [];
-            if (player) targets.push(player.cx);
-            this.summons.forEach(s => {
-                if (s.alive && s.owner === 'player') targets.push(s.cx || s.x);
-            });
-
-            if (targets.length <= 1) {
-                // Single target: just aim at it
-                const midTarget = CONFIG.MIDPOINT - 40;
-                const playerTarget = player ? player.cx : midTarget;
-                targetX = midTarget - forwardFrac * (midTarget - playerTarget);
-            } else {
-                // Find the X center that maximizes entities in a stripW window
-                let bestX = player ? player.cx : CONFIG.MIDPOINT - 40;
-                let bestCount = 0;
-                for (const tx of targets) {
-                    let count = 0;
-                    for (const ox of targets) {
-                        if (Math.abs(ox - tx) <= stripW / 2) count++;
-                    }
-                    if (count > bestCount || (count === bestCount && player && Math.abs(tx - player.cx) < Math.abs(bestX - player.cx))) {
-                        bestCount = count;
-                        bestX = tx;
-                    }
+            let bestX = targets[0];
+            let bestCount = 0;
+            for (const tx of targets) {
+                let count = 0;
+                for (const ox of targets) {
+                    if (Math.abs(ox - tx) <= stripW / 2) count++;
                 }
-                // Blend toward best cluster center based on forward stance
-                const midTarget = CONFIG.MIDPOINT - 40;
-                targetX = midTarget - forwardFrac * (midTarget - bestX);
+                if (count > bestCount || (count === bestCount && opponent && Math.abs(tx - opponent.cx) < Math.abs(bestX - opponent.cx))) {
+                    bestCount = count;
+                    bestX = tx;
+                }
             }
+            targetX = bestX;
         }
         const clampedX = isPlayer
             ? Math.max(CONFIG.MIDPOINT + 40, Math.min(targetX, CONFIG.FIELD_RIGHT - 40))
@@ -1796,6 +1831,16 @@ class Combat {
         if (sameKey.length <= 1) { // the dying one is still in list
             delete owner.spellOnScreen[summon.comboKey];
         }
+
+        // Stamina refund on summon death
+        const spell = SPELL_DATA[summon.comboKey];
+        if (spell && spell.stats.stamina) {
+            const refund = Math.floor(spell.stats.stamina * CONFIG.SUMMON_DEATH_STAMINA_REFUND);
+            if (refund > 0) {
+                owner.stamina = Math.min(owner.maxStamina, owner.stamina + refund);
+                this.effects.statusText(summon.cx, summon.y - 10, '+' + refund + ' STA', '#44ddff');
+            }
+        }
     }
 
     _applyEnchantEffects(target, attacker) {
@@ -2185,6 +2230,12 @@ class Combat {
             this._clashEffects = this._clashEffects.filter(c => c.timer > 0);
         }
 
+        // Heal pulse rings
+        if (this._healPulses) {
+            this._healPulses.forEach(p => { p.timer -= dt; });
+            this._healPulses = this._healPulses.filter(p => p.timer > 0);
+        }
+
         // Decay last-spell display timers
         if (this.lastSpell) {
             this.lastSpell.timer -= dt;
@@ -2564,21 +2615,35 @@ class Combat {
     }
 
     _summonHeal(summon) {
-        // Heal nearby entities in same lane(s)
+        // Heal all allies in the healer's lane(s)
         const lanes = summon.getLanes();
         const allies = [
             summon.owner === 'player' ? this.player : this.enemy,
             ...this.summons.filter(s => s.owner === summon.owner && s !== summon),
         ];
+        let healed = false;
         allies.forEach(a => {
-            if (lanes.includes(a.lane) && Math.abs(a.cx - summon.cx) < 200) {
-                if (a.hp < a.maxHp) {
-                    a.hp = Math.min(a.maxHp, a.hp + summon.healAmt);
-                    this.effects.healNumber(a.cx, a.y, summon.healAmt);
-                    AudioEngine.playSfx('heal');
+            if (lanes.includes(a.lane) && a.hp < a.maxHp) {
+                a.hp = Math.min(a.maxHp, a.hp + summon.healAmt);
+                this.effects.healNumber(a.cx, a.y, summon.healAmt);
+                // Green sparkle trail from healer to target
+                const steps = 4;
+                for (let i = 0; i < steps; i++) {
+                    const t = (i + 1) / (steps + 1);
+                    const px = summon.cx + (a.cx - summon.cx) * t + (Math.random() - 0.5) * 10;
+                    const py = summon.cy + (a.cy - summon.cy) * t + (Math.random() - 0.5) * 10;
+                    this.effects.burst(px, py, '#88ffaa', 2, 1.5, 400, 2.5, { round: true, noGravity: true, fadeSize: true });
                 }
+                healed = true;
             }
         });
+        if (healed) {
+            // Healing pulse ring on the healer
+            this._healPulses = this._healPulses || [];
+            this._healPulses.push({ x: summon.cx, y: summon.cy, timer: 400, maxTimer: 400 });
+            this.effects.burst(summon.cx, summon.cy, '#44ff88', 6, 2, 350, 3, { round: true, noGravity: true, fadeSize: true });
+            AudioEngine.playSfx('heal');
+        }
     }
 
     _laneEffectTick(le) {
@@ -2909,6 +2974,33 @@ class Combat {
                     ctx.stroke();
                 }
 
+                ctx.shadowBlur = 0;
+                ctx.restore();
+            });
+        }
+
+        // Heal pulse rings (expanding green ring from healer)
+        if (this._healPulses) {
+            this._healPulses.forEach(p => {
+                const prog = 1 - p.timer / p.maxTimer;
+                const alpha = prog < 0.15 ? prog / 0.15 : Math.max(0, 1 - (prog - 0.15) / 0.85);
+                const r = 6 + prog * 30;
+                ctx.save();
+                ctx.globalAlpha = alpha * 0.7;
+                ctx.strokeStyle = '#44ff88';
+                ctx.shadowColor = '#44ff88';
+                ctx.shadowBlur = 12;
+                ctx.lineWidth = 2.5 - prog * 2;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+                ctx.stroke();
+                // Inner glow dot
+                ctx.globalAlpha = alpha * 0.5;
+                ctx.fillStyle = '#aaffcc';
+                ctx.shadowBlur = 8;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, Math.max(1, 4 * (1 - prog)), 0, Math.PI * 2);
+                ctx.fill();
                 ctx.shadowBlur = 0;
                 ctx.restore();
             });

@@ -61,24 +61,24 @@ const SPELL_DATA = {
         stats: { hits: 3, cd: 3500, stamina: 14 },
     },
 
-    // ===== X-starters: Magic Attacks =====
+    // ===== X-starters: Summon Commands =====
     'XZZ': {
-        name: 'Ice Shard', type: 'projectile', category: 'magic', affinity: 'ice',
-        icon: 'iceshard',
-        desc: 'Quick ice shard that freezes on hit.',
-        stats: { dmg: 4, speed: 7, cd: 550, freezeDur: 600, stamina: 16 },
+        name: 'Mend', type: 'utility', category: 'summon_cmd', affinity: 'none',
+        icon: 'heal',
+        desc: 'Heal all your summons.',
+        stats: { healAmt: 8, cd: 4000, stamina: 12, windup: 400 },
     },
     'XZX': {
-        name: 'Fireball', type: 'projectile', category: 'magic', affinity: 'fire',
-        icon: 'fireball',
-        desc: 'Quick fireball that burns on hit.',
-        stats: { dmg: 5, speed: 7, cd: 550, burnDmg: 1, burnDur: 1500, stamina: 16 },
+        name: 'War Drums', type: 'utility', category: 'summon_cmd', affinity: 'none',
+        icon: 'drums',
+        desc: 'All summons gain bonus move speed and attack speed.',
+        stats: { duration: 5000, speedMult: 1.5, atkMult: 1.5, cd: 6000, stamina: 18, windup: 400 },
     },
     'XZC': {
-        name: 'Venom Mist', type: 'projectile', category: 'magic', affinity: 'poison',
-        icon: 'poison',
-        desc: 'Slow-moving toxic cloud. Poisons anything it touches.',
-        stats: { dmg: 2, speed: 2.5, cd: 600, poisonDmg: 2, poisonDur: 3500, areaW: 60, stamina: 14 },
+        name: 'Absorption', type: 'utility', category: 'summon_cmd', affinity: 'none',
+        icon: 'absorb',
+        desc: 'Consume all your summons to restore HP and stamina.',
+        stats: { hpPerSummon: 6, staminaPerSummon: 10, cd: 8000, stamina: 8, windup: 500 },
     },
     'XXZ': {
         name: 'Frostbite Path', type: 'lane', category: 'magic', affinity: 'ice',

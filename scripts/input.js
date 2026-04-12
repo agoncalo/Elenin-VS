@@ -118,6 +118,18 @@ class InputManager {
     }
 
     update(dt) {
+        // Cancel pending combo if player presses a movement key (misinput recovery)
+        if (this.firstKey && !this.postCastTimer) {
+            if (this.justPressed[this.forwardKey] || this.justPressed[this.backKey]) {
+                this.firstKey = null;
+                this.direction = null;
+                this.comboTimer = 0;
+                this.locked = false;
+                this.lockTimer = 0;
+                this.inputBuffer = [];
+            }
+        }
+
         // Combo timeout (first key entered but second not pressed in time)
         if (this.comboTimer > 0) {
             this.comboTimer -= dt;

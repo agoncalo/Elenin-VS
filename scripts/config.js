@@ -51,7 +51,7 @@ const CONFIG = {
     RUNE_TYPES: [
         { id: 'stamina', label: '+STA',  color: '#44ddff', icon: '\u2726', staminaRefill: 40 },
         { id: 'speed',   label: 'SPD\u2191',  color: '#ffaa22', icon: '\u2607', speedMult: 1.5, duration: 4000 },
-        { id: 'regen',   label: 'REGEN', color: '#44ff88', icon: '\u2665', regenRate: 3, duration: 5000 },
+        { id: 'regen',   label: 'REGEN', color: '#44ff88', icon: '\u2665', regenRate: 1.5, duration: 4000 },
     ],
 
     // Movement
@@ -68,6 +68,9 @@ const CONFIG = {
 
     // Loyalty drop per minion HP
     LOYALTY_PER_HP: 0.5,
+
+    // Summon death stamina refund (fraction of spell cost)
+    SUMMON_DEATH_STAMINA_REFUND: 0.35,
 
     // Colors
     FONT: "'Exo 2', sans-serif",
